@@ -76,6 +76,31 @@ async function fetchAllPlayers() {
     }
 }
 
+/**
+ * findPlayerById — searches all pool collections for a player by _id.
+ * This is the correct way to look up player data since players exist in
+ * marquee, pool1_batsmen, pool1_bowlers, pool2_batsmen, pool2_bowlers,
+ * pool3, and pool4 — NOT in a single Mongoose model collection.
+ */
+const PLAYER_COLLECTIONS = [
+    'marquee', 'pool1_batsmen', 'pool1_bowlers',
+    'pool2_batsmen', 'pool2_bowlers', 'pool3', 'pool4'
+];
+
+async function findPlayerById(playerId) {
+    if (!playerId) return null;
+    const { ObjectId } = require('mongoose').Types;
+    let oid;
+    try { oid = new ObjectId(String(playerId)); } catch { return null; }
+
+    for (const collName of PLAYER_COLLECTIONS) {
+        const doc = await mongoose.connection.db.collection(collName).findOne({ _id: oid });
+        if (doc) return doc;
+    }
+    return null;
+}
+
+
 const IPL_TEAMS = [
     { id: 'MI', name: 'Mumbai Indians', color: '#004BA0', logoUrl: 'https://upload.wikimedia.org/wikipedia/en/thumb/c/cd/Mumbai_Indians_Logo.svg/1200px-Mumbai_Indians_Logo.svg.png' },
     { id: 'CSK', name: 'Chennai Super Kings', color: '#FFFF3C', logoUrl: 'https://upload.wikimedia.org/wikipedia/en/thumb/2/2b/Chennai_Super_Kings_Logo.svg/1200px-Chennai_Super_Kings_Logo.svg.png' },
@@ -796,12 +821,11 @@ const setupSocketHandlers = (io) => {
             const team = state.teams[teamIndex];
             const { selectTop15 } = require('../services/aiRating');
 
-            // Need full player data for AI
-            const Player = require('../models/Player');
+            // Need full player data for AI — use cross-collection lookup
             if (!team.playersAcquired) return;
 
             const playersWithData = await Promise.all(team.playersAcquired.map(async (p) => {
-                const data = await Player.findById(p.player);
+                const data = await findPlayerById(p.player);
                 return { ...p, player: data };
             }));
 
@@ -1123,9 +1147,10 @@ async function finalizeResults(roomCode, io) {
         const Player = require('../models/Player');
 
         // 1. Prepare teams with full player data for AI
+        // Use findPlayerById to search across all pool collections (marquee, pool1_*, etc.)
         const teamsToEvaluate = await Promise.all(state.teams.map(async (team) => {
             const playersWithData = await Promise.all(team.playersAcquired.map(async (p) => {
-                const data = await Player.findById(p.player).lean(); // Use lean() for plain JS object
+                const data = await findPlayerById(p.player);
                 return {
                     id: String(p.player),
                     name: data?.player || data?.name || p.name,

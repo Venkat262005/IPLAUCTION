@@ -296,76 +296,159 @@ const Lobby = () => {
   return (
     <div className="h-screen w-screen flex items-center justify-center p-6 relative overflow-hidden">
 
-      <div className="w-full max-w-4xl grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-12 items-center relative z-10">
-        {/* Brand Side */}
+      <div className="w-full max-w-5xl grid grid-cols-1 lg:grid-cols-2 gap-10 lg:gap-16 items-center relative z-10 py-10 lg:py-0 overflow-y-auto lg:overflow-visible h-full lg:h-auto custom-scrollbar">
+        {/* Brand Side - Conditional: Brand or Rules */}
         <motion.div
-          initial={{ x: -100, opacity: 0 }}
-          animate={{ x: 0, opacity: 1 }}
-          className="space-y-8"
+          initial={{ y: 20, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          className="space-y-10 lg:space-y-12"
         >
-          <div>
-            <motion.div
-              initial={{ scale: 0.8 }}
-              animate={{ scale: 1 }}
-              className="bg-white/5 border border-white/10 w-16 h-16 md:w-20 md:h-20 rounded-2xl md:rounded-3xl mb-6 flex items-center justify-center"
-            >
-              <svg
-                width="40"
-                height="40"
-                viewBox="0 0 24 24"
-                fill="none"
-                xmlns="http://www.w3.org/2000/svg"
+          <AnimatePresence mode="wait">
+            {!isJoined ? (
+              <motion.div
+                key="brand-content"
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                className="space-y-8"
               >
-                <path d="M12 2L2 7L12 12L22 7L12 2Z" fill="#00d2ff" />
-                <path
-                  d="M2 17L12 22L22 17"
-                  stroke="#9333ea"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-                <path
-                  d="M2 12L12 17L22 12"
-                  stroke="#00d2ff"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            </motion.div>
-            <h1 className="text-4xl sm:text-5xl lg:text-6xl xl:text-7xl font-black italic tracking-tighter leading-none text-white uppercase mb-4">
-              IPL{" "}
-              <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-500">
-                Auction
-              </span>
-            </h1>
-            <p className="text-slate-500 text-base lg:text-lg font-bold leading-relaxed max-w-sm">
-              Real-time multiplayer bidding arena. Draft your dream XI against
-              rivals.
-            </p>
-          </div>
+                <div>
+                  <motion.div
+                    initial={{ scale: 0.8 }}
+                    animate={{ scale: 1 }}
+                    className="bg-white/5 border border-white/10 w-16 h-16 md:w-20 md:h-20 rounded-2xl md:rounded-3xl mb-6 flex items-center justify-center"
+                  >
+                    <svg
+                      width="40"
+                      height="40"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      xmlns="http://www.w3.org/2000/svg"
+                    >
+                      <path d="M12 2L2 7L12 12L22 7L12 2Z" fill="#00d2ff" />
+                      <path
+                        d="M2 17L12 22L22 17"
+                        stroke="#9333ea"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                      <path
+                        d="M2 12L12 17L22 12"
+                        stroke="#00d2ff"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  </motion.div>
+                  <h1 className="text-4xl sm:text-5xl lg:text-6xl xl:text-7xl font-black italic tracking-tighter leading-none text-white uppercase mb-4">
+                    IPL{" "}
+                    <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-500">
+                      Auction
+                    </span>
+                  </h1>
+                  <p className="text-slate-500 text-base lg:text-lg font-bold leading-relaxed max-w-sm">
+                    Real-time multiplayer bidding arena. Draft your dream XI against
+                    rivals.
+                  </p>
+                </div>
 
-          <div className="flex flex-wrap gap-4">
-            <div className="px-4 md:px-5 py-2 md:py-3 glass-panel rounded-xl md:rounded-2xl border-white/5 flex items-center gap-3">
-              <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-              <span className="text-[9px] md:text-[10px] font-black uppercase tracking-widest text-slate-400">
-                Low Latency Engine
-              </span>
-            </div>
-            <div className="px-4 md:px-5 py-2 md:py-3 glass-panel rounded-xl md:rounded-2xl border-white/5 flex items-center gap-3">
-              <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></div>
-              <span className="text-[9px] md:text-[10px] font-black uppercase tracking-widest text-slate-400">
-                Gemini AI Ratings
-              </span>
-            </div>
-          </div>
+                <div className="flex flex-wrap gap-4">
+                  <div className="px-4 md:px-5 py-2 md:py-3 glass-panel rounded-xl md:rounded-2xl border-white/5 flex items-center gap-3">
+                    <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+                    <span className="text-[9px] md:text-[10px] font-black uppercase tracking-widest text-slate-400">
+                      Low Latency Engine
+                    </span>
+                  </div>
+                  <div className="px-4 md:px-5 py-2 md:py-3 glass-panel rounded-xl md:rounded-2xl border-white/5 flex items-center gap-3">
+                    <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></div>
+                    <span className="text-[9px] md:text-[10px] font-black uppercase tracking-widest text-slate-400">
+                      Gemini AI Ratings
+                    </span>
+                  </div>
+                </div>
+              </motion.div>
+            ) : (
+              <motion.div
+                key="rules-content"
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -20 }}
+                className="space-y-6"
+              >
+                {/* Rules Section (Now the main content) */}
+                <div className="space-y-2 mb-6">
+                  <h2 className="text-3xl font-black italic tracking-tighter text-white uppercase">
+                    Auction <span className="text-blue-400">Directives</span>
+                  </h2>
+                  <p className="text-slate-500 text-xs font-bold uppercase tracking-widest">Mandatory Squad Compliance</p>
+                </div>
+
+                <div className="glass-panel p-6 sm:p-8 rounded-[32px] border-white/5 space-y-6 max-w-md shadow-2xl bg-white/5 backdrop-blur-sm">
+                  <ul className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-4">
+                    <li className="flex items-start gap-4">
+                      <div className="w-2 h-2 rounded-full bg-blue-500 mt-2 shrink-0 shadow-[0_0_10px_rgba(59,130,246,0.5)]"></div>
+                      <p className="text-[11px] text-slate-400 font-bold leading-relaxed">
+                        <span className="text-slate-200 uppercase tracking-tighter mr-1 block sm:inline">Squad Size:</span>
+                        Min <span className="text-blue-400">18</span> — Max <span className="text-blue-400">25</span>.
+                      </p>
+                    </li>
+                    <li className="flex items-start gap-4">
+                      <div className="w-2 h-2 rounded-full bg-purple-500 mt-2 shrink-0 shadow-[0_0_10px_rgba(168,85,247,0.5)]"></div>
+                      <p className="text-[11px] text-slate-400 font-bold leading-relaxed">
+                        <span className="text-slate-200 uppercase tracking-tighter mr-1 block sm:inline">Overseas:</span>
+                        Max <span className="text-purple-400">8</span> foreign players.
+                      </p>
+                    </li>
+                    <li className="flex items-start gap-4">
+                      <div className="w-2 h-2 rounded-full bg-green-500 mt-2 shrink-0 shadow-[0_0_10px_rgba(34,197,94,0.5)]"></div>
+                      <p className="text-[11px] text-slate-400 font-bold leading-relaxed">
+                        <span className="text-slate-200 uppercase tracking-tighter mr-1 block sm:inline">Bowling:</span>
+                        Min <span className="text-green-400">6</span> specialist options.
+                      </p>
+                    </li>
+                    <li className="flex items-start gap-4">
+                      <div className="w-2 h-2 rounded-full bg-yellow-500 mt-2 shrink-0 shadow-[0_0_10px_rgba(234,179,8,0.5)]"></div>
+                      <p className="text-[11px] text-slate-400 font-bold leading-relaxed">
+                        <span className="text-slate-200 uppercase tracking-tighter mr-1 block sm:inline">Keeping:</span>
+                        Minimum <span className="text-yellow-400">2</span> WK required.
+                      </p>
+                    </li>
+                  </ul>
+
+                  <div className="pt-6 border-t border-white/5">
+                    <div className="flex items-center gap-2 mb-3">
+                      <span className="text-[9px] font-black text-blue-400 uppercase tracking-[0.2em]">Evaluation Metrics</span>
+                      <div className="h-px flex-1 bg-blue-500/10"></div>
+                    </div>
+                    <p className="text-[11px] text-slate-500 font-medium leading-relaxed">
+                      AI analyzes your <span className="text-slate-300">11+4 core</span> for T20 viability, <span className="text-slate-300">Strike Rate</span>, and variety.
+                    </p>
+                  </div>
+
+                  {/* Disqualification Note */}
+                  <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-2xl flex items-start gap-3 shadow-[0_0_15px_rgba(239,68,68,0.1)]">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="mt-0.5 shrink-0">
+                      <circle cx="12" cy="12" r="10" />
+                      <line x1="12" y1="8" x2="12" y2="12" />
+                      <line x1="12" y1="16" x2="12.01" y2="16" />
+                    </svg>
+                    <p className="text-[10px] text-red-400 font-black leading-tight uppercase tracking-tight">
+                      Violation results in <span className="text-white underline decoration-red-500 underline-offset-2">Immediate Disqualification</span>. No zero rating will be given.
+                    </p>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </motion.div>
 
         {/* Interaction Side */}
         <motion.div
-          initial={{ x: 100, opacity: 0 }}
-          animate={{ x: 0, opacity: 1 }}
-          className="glass-card rounded-[32px] md:rounded-[40px] p-6 md:p-10 border-white/5 relative"
+          initial={{ y: 20, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          className="glass-card rounded-[32px] md:rounded-[40px] p-6 sm:p-8 lg:p-10 border-white/5 relative bg-white/5 backdrop-blur-xl shadow-2xl"
         >
           <AnimatePresence mode="wait">
             {!isJoined ? (

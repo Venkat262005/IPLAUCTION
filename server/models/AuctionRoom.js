@@ -4,6 +4,7 @@ const auctionRoomSchema = new mongoose.Schema({
     roomId: { type: String, required: true, unique: true },
     type: { type: String, enum: ["public", "private"], default: "private" }, // Formal Room Type
     hostSocketId: { type: String }, // For legacy engine reference
+    hostUserId: { type: String },   // Permanent secure host identifier
     status: { type: String, enum: ["Lobby", "Auctioning", "Selection", "Finished"], default: "Lobby" },
     purseLimit: { type: Number, default: 12000 },
 
@@ -14,16 +15,23 @@ const auctionRoomSchema = new mongoose.Schema({
         teamThemeColor: { type: String },
         ownerSocketId: { type: String },
         ownerName: { type: String },
+        ownerUserId: { type: String }, // Permanent secure identifier
+        logoUrl: { type: String },
         currentPurse: { type: Number, default: 12000 },
         overseasCount: { type: Number, default: 0 },
         rtmUsed: { type: Boolean, default: false },
         playersAcquired: [{
             player: { type: mongoose.Schema.Types.ObjectId, ref: 'Player' },
             name: { type: String },
+            role: { type: String },
+            nationality: { type: String },
+            image_path: { type: String },
             isOverseas: { type: Boolean, default: false },
             boughtFor: { type: Number }
         }],
-        playing15: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Player' }],
+        playing11: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Player' }],
+        impactPlayers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Player' }],
+        playing15: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Player' }], // Keeping for backward compatibility
         evaluation: { type: Object }, // Store detailed AI results
         rank: { type: Number }         // Store final ranking
     }],

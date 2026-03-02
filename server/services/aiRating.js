@@ -5,25 +5,27 @@ const validateSquad = (team) => {
     const players = team.playersAcquired;
     const squadSize = players.length;
 
-    if (squadSize < 17) return { valid: false, reason: `Squad has only ${squadSize} players. Minimum 17 required for evaluation.` };
+    // Minimum 15 players (11 starters + 4 impact)
+    if (squadSize < 15) return { valid: false, reason: `Squad has only ${squadSize} players. Minimum 15 required for evaluation.` };
     if (squadSize > 25) return { valid: false, reason: `Squad has ${squadSize} players. Maximum 25 allowed.` };
 
     let wks = 0;
-    let pureBowlers = 0;
+    let bowlersOrAR = 0;
     let overseas = 0;
 
     players.forEach(p => {
-        const role = (p.role || '').toLowerCase().trim();
-        const nation = (p.nationality || '').toLowerCase().trim();
+        // Handle both embedded player doc and flattened structure
+        const playerDoc = p.player || p;
+        const role = (playerDoc.role || '').toLowerCase().trim();
+        const nation = (playerDoc.nationality || '').toLowerCase().trim();
 
         if (role.includes('keep') || role.includes('wk')) wks++;
-        // Pure bowler means role contains bowl but NOT all-rounder
-        if (role.includes('bowl') && !role.includes('all')) pureBowlers++;
+        if (role.includes('bowl') || role.includes('all')) bowlersOrAR++;
         if (nation && nation !== 'india') overseas++;
     });
 
-    if (wks < 2) return { valid: false, reason: `Squad has only ${wks} Wicketkeeper(s). Minimum 2 required.` };
-    if (pureBowlers < 5) return { valid: false, reason: `Squad has only ${pureBowlers} pure Bowler(s). Minimum 5 required.` };
+    if (wks < 1) return { valid: false, reason: `Squad has no Wicketkeeper. Minimum 1 required.` };
+    if (bowlersOrAR < 5) return { valid: false, reason: `Squad has only ${bowlersOrAR} Bowler(s)/All-rounder(s). Minimum 5 required.` };
     if (overseas > 8) return { valid: false, reason: `Squad has ${overseas} Overseas players. Maximum 8 allowed.` };
 
     return { valid: true };
@@ -35,7 +37,7 @@ const evaluateTeam = async (team) => {
         console.log(`--- Evaluation Disqualified for ${team.teamName}: ${validation.reason} ---`);
         return {
             battingScore: 0, bowlingScore: 0, balanceScore: 0, impactScore: 0, overallScore: 0,
-            starPlayer: "N/A", hiddenGem: "N/A", playing11: [],
+            starPlayer: "N/A", hiddenGem: "N/A", playing11: [], impactPlayers: [],
             tacticalVerdict: `DISQUALIFIED: ${validation.reason}`,
             weakness: validation.reason,
             historicalContext: "Failed to meet mandatory squad composition requirements."
@@ -43,24 +45,53 @@ const evaluateTeam = async (team) => {
     }
 
     const model = genAI.getGenerativeModel({ model: 'gemini-flash-latest' });
+
+    // Preparation for evaluation: Identify slow batsmen, bowling variety, etc.
+    const playing11 = team.playing11 || [];
+    const impactPlayers = team.impactPlayers || [];
+    const bench = team.playersAcquired.filter(p => !playing11.concat(impactPlayers).includes(p.id));
+
     const prompt = `
-You are a cynical, world-class T20 Franchise Consultant known for your brutal honesty and "High-Performance or Bust" attitude. You despise mediocrity and value tactical perfection.
+You are an IPL Historian & Analytics Expert. Your goal is to evaluate the drafted squad based on their HISTORICAL IPL IMPACT and performance trends. 
+
+IMPORTANT: 
+1. Ignore the actual age or current physical state of the players. Treat them as the "Prime" or "Peak" versions of themselves based on their best IPL contributions.
+2. Focus on their past impacts, match-winning performances, and legacy in the IPL.
+3. Evaluate how their styles complement each other in a modern T20 context.
 
 Team Name: ${team.teamName}
 Total Budget: ₹12000L
 Budget Remaining: ₹${team.currentPurse || team.budgetRemaining}L
 
-Drafted Squad (Total Players: ${team.playersAcquired.length}):
-${team.playersAcquired.map(p => {
+SELECTED PLAYING 11:
+${playing11.map(id => {
+        const p = team.playersAcquired.find(pa => pa.id === id);
+        if (!p) return `- [Unknown ID: ${id}]`;
         const s = p.stats || {};
-        return `- ${p.name || 'Unknown'} (${p.role}, ${p.nationality}) | Matches: ${s.matches}, Runs: ${s.runs}, SR: ${s.strikeRate}, Wickets: ${s.wickets}, Econ: ${s.economy} | Price: ₹${p.boughtFor}L`;
+        return `- ${p.name} (${p.role}, ${p.nationality}) | Matches: ${s.matches}, Runs: ${s.runs}, SR: ${s.strikeRate}, Avg: ${s.average}, Wickets: ${s.wickets}, Econ: ${s.economy}`;
     }).join('\n')}
 
-DIRECTIONS FOR EVALUATION:
-1. **Be Brutal**: If a selection is a waste of money (old, poor stats, or overpriced), call it out. If the squad is balanced but lacks a "X-factor" superstar, mark them down.
-2. **Tactical Depth**: Check for "finishers", "death bowlers", and "Powerplay specialists". Don't just look at names, look at the stats.
-3. **Budget Usage**: Leaving too much money on the table is a fireable offense. Spending it all on one or two players is equally stupid.
-4. **Grant Granularity**: Use the overallScore to distinguish quality.
+IMPACT PLAYERS (4):
+${impactPlayers.map(id => {
+        const p = team.playersAcquired.find(pa => pa.id === id);
+        if (!p) return `- [Unknown ID: ${id}]`;
+        const s = p.stats || {};
+        return `- ${p.name} (${p.role}, ${p.nationality}) | SR: ${s.strikeRate}, Econ: ${s.economy}`;
+    }).join('\n')}
+
+BENCH STRENGTH (${bench.length} players):
+${bench.map(p => `- ${p.name} (${p.role}) | SR: ${p.stats?.strikeRate || 0}, Econ: ${p.stats?.economy || 0}`).join('\n')}
+
+CRITICAL EVALUATION METRICS:
+1. **Historical Dominance**: Do the core players have a history of winning matches?
+2. **Phase Mastery**: How well do they control Powerplay, Middle Overs, and Death?
+3. **Synergy**: Do the playing styles of the $11+4$ combine for a complete T20 unit?
+4. **Impact Factor**: How much did these players influence IPL games in their peak seasons?
+
+DIRECTIONS:
+1. **Judgment**: Use the provided stats AND your knowledge of their peak IPL performance. 
+2. **No Ageism**: Do NOT call out players for being "old" or "retired". Focus on their historical impact.
+3. **JSON Structure**: You MUST respond with ONLY a JSON object matching the exact structure below.
 
 RESPOND ONLY WITH A VALID JSON OBJECT matching this EXACT structure:
 {
@@ -68,15 +99,17 @@ RESPOND ONLY WITH A VALID JSON OBJECT matching this EXACT structure:
   "bowlingScore": <1-10>,
   "balanceScore": <1-10>,
   "impactScore": <1-10>,
-  "overallScore": <1-100 (Be extremely precise: use decimals if needed, e.g., 88.4)>,
-  "starPlayer": "<Name of biggest match-winner>",
-  "hiddenGem": "<Name of a high-value steal>",
-  "playing11": ["Name1", "Name2", ... (Exactly 11 names of their best squad)],
-  "tacticalVerdict": "3-4 sentences of 'expert' analysis. Be sharp, critical, and specific about their squad construction.",
-  "weakness": "1-2 sentences of brutal honesty about why this team will fail or struggle.",
-  "historicalContext": "A snarky comparison to a famous IPL failure or success."
+  "overallScore": <1-100 (Be extremely precise)>,
+  "starPlayer": "<Name of biggest historical match-winner>",
+  "hiddenGem": "<Name of a high-value steal based on historical data>",
+  "playing11": ["Name1", "Name2", ... (The 11 starters)],
+  "impactPlayers": ["Name1", "Name2", "Name3", "Name4"],
+  "tacticalVerdict": "Analysis of the team's balance/impact based on historical IPL performances.",
+  "weakness": "Gap in the team's historical composition.",
+  "benchAnalysis": "How reliable the backups were in their prime.",
+  "historicalContext": "A comparison to a legendary IPL season or team."
 }
-No other text. Be an expert, be rude, be accurate.
+No other text. Be an expert, be accurate, focus on legacy and impact.
 `;
 
     try {
@@ -84,70 +117,40 @@ No other text. Be an expert, be rude, be accurate.
         const result = await model.generateContent(prompt);
         const response = await result.response;
         const text = response.text();
-        console.log(`--- AI Response received for ${team.teamName} ---`);
-        console.log("RAW AI TEXT:", text);
-        // Clean JSON formatting if Gemini adds markdown codeblocks
         const cleanedText = text.replace(/```json/g, '').replace(/```/g, '').trim();
         return JSON.parse(cleanedText);
     } catch (error) {
         console.error('Error in AI evaluation:', error);
         return {
             battingScore: 0, bowlingScore: 0, balanceScore: 0, impactScore: 0, overallScore: 0,
-            starPlayer: "N/A", hiddenGem: "N/A", playing11: [],
-            tacticalVerdict: "Evaluation failed due to technical error or incomplete roster analysis.",
+            starPlayer: "N/A", hiddenGem: "N/A", playing11: [], impactPlayers: [],
+            tacticalVerdict: "Evaluation failed.",
             weakness: "No data available.",
             historicalContext: "N/A"
         };
     }
 };
 
-const calculateHeuristicScore = (team) => {
-    const players = team.playersAcquired;
-    const roles = {
-        'batsman': 0,
-        'Bowler': 0,
-        'All-Rounder': 0,
-        'Wicketkeeper': 0
-    };
-
-    players.forEach(p => {
-        const role = (p.role || 'Batsman').toLowerCase();
-        if (role.includes('keep')) roles['Wicketkeeper']++;
-        else if (role.includes('all')) roles['All-Rounder']++;
-        else if (role.includes('bowl')) roles['Bowler']++;
-        else roles['batsman']++; // Default
-    });
-
-    // Simple IPL squad balance heuristic
-    let balancePoints = 0;
-    if (roles['batsman'] >= 5) balancePoints += 20;
-    if (roles['Bowler'] >= 4) balancePoints += 20;
-    if (roles['All-Rounder'] >= 2) balancePoints += 20;
-    if (roles['Wicketkeeper'] >= 1) balancePoints += 20;
-    if (players.length >= 11) balancePoints += 20;
-
-    return balancePoints;
-};
-
-const selectTop15 = async (teamName, players) => {
+const selectPlaying11AndImpact = async (teamName, players) => {
     const model = genAI.getGenerativeModel({ model: 'gemini-flash-latest' });
 
     const prompt = `
 You are an elite T20 Franchise Cricket Head Coach. Your team "${teamName}" has drafted ${players.length} players.
-You must select the BEST "Playing 15" for the upcoming IPL season.
+You must select the BEST "Playing 11" and "4 Impact Players".
 
 Drafted Players with Stats:
-${players.map((p, i) => `ID: [${p.player?._id || p.player}] | Name: ${p.player?.player || p.name} | Role: ${p.player?.role} | Matches: ${p.player?.stats?.matches || 0}, Runs: ${p.player?.stats?.runs || 0}, SR: ${p.player?.stats?.strikeRate || 0}, Wickets: ${p.player?.stats?.wickets || 0}, Econ: ${p.player?.stats?.economy || 0}`).join('\n')}
+${players.map((p, i) => `ID: [${p.player?._id || p.player || p.id}] | Name: ${p.player?.player || p.name} | Role: ${p.player?.role} | SR: ${p.player?.stats?.strikeRate || 0}, Econ: ${p.player?.stats?.economy || 0}`).join('\n')}
 
-Select exactly 15 players that provide the best balance of:
-1. Explosive openers and middle-order anchors.
-2. At least one world-class wicket-keeper.
-3. Genuine all-rounders.
-4. Tactical bowling variety (Pace, Left-arm, Leg-spin, Off-spin).
+Tactical requirements:
+1. Balanced Playing 11 (Openers, Middle Order, Finisher, Wicket-keeper, Diverse Bowlers).
+2. Exactly 4 Impact Players who provide strategic depth or tactical substitutions.
 
-RESPOND ONLY WITH A VALID JSON ARRAY containing ONLY the 15 IDs (strings) of the players you selected:
-["id1", "id2", ..., "id15"]
-No other text. Strictly return a JSON array of strings.
+RESPOND ONLY WITH A VALID JSON OBJECT:
+{
+  "playing11": ["id1", "id2", ..., "id11"],
+  "impactPlayers": ["id12", "id13", "id14", "id15"]
+}
+No other text. IDs must be the bracketed strings from above.
 `;
 
     try {
@@ -155,136 +158,88 @@ No other text. Strictly return a JSON array of strings.
         const response = await result.response;
         const text = response.text();
         const cleanedText = text.replace(/```json/g, '').replace(/```/g, '').trim();
-        const selectedIds = JSON.parse(cleanedText);
+        const selection = JSON.parse(cleanedText);
 
-        if (Array.isArray(selectedIds) && selectedIds.length > 0) {
-            return selectedIds;
+        if (selection.playing11 && selection.impactPlayers) {
+            return selection;
         }
-        return players.slice(0, 15).map(p => String(p.player?._id || p.player));
+        return {
+            playing11: players.slice(0, 11).map(p => String(p.player?._id || p.player || p.id)),
+            impactPlayers: players.slice(11, 15).map(p => String(p.player?._id || p.player || p.id))
+        };
     } catch (error) {
-        console.error('Error in AI player selection:', error);
-        return players.slice(0, 15).map(p => String(p.player?._id || p.player));
+        console.error('Error in AI squad selection:', error);
+        return {
+            playing11: players.slice(0, 11).map(p => String(p.player?._id || p.player || p.id)),
+            impactPlayers: players.slice(11, 15).map(p => String(p.player?._id || p.player || p.id))
+        };
     }
 };
 
 const evaluateAllTeams = async (teamsData) => {
-    // Process all teams in parallel
     const evaluations = await Promise.all(
         teamsData.map(async (team) => {
-            // 1. Validate the FULL SQUAD first
+            // Check if we already have a background evaluation
+            if (team.evaluation && team.evaluation.overallScore > 0) {
+                return team;
+            }
+
             const validation = validateSquad(team);
 
             if (!validation.valid) {
-                console.log(`--- EVALUATION DISQUALIFIED FOR ${team.teamName}: ${validation.reason} ---`);
                 return {
                     ...team,
                     evaluation: {
-                        battingScore: 0,
-                        bowlingScore: 0,
-                        balanceScore: 0,
-                        impactScore: 0,
                         overallScore: 0,
-                        starPlayer: "N/A",
-                        hiddenGem: "N/A",
-                        playing11: [],
                         tacticalVerdict: `DISQUALIFIED: ${validation.reason}`,
-                        weakness: validation.reason,
-                        historicalContext: "Failed to meet mandatory squad composition requirements."
                     }
                 };
             }
 
-            // 2. Identify the Playing 15 for AI analysis (already handled by auctionEngine timeout logic if needed)
-            const playing15Ids = (team.playing15 && team.playing15.length > 0)
-                ? team.playing15.map(id => String(id))
-                : team.playersAcquired.slice(0, 15).map(p => String(p.id));
-
-            const squadToEvaluate = team.playersAcquired.filter(p => playing15Ids.includes(p.id));
-
-            // Heuristic score for fallback
-            const hScore = calculateHeuristicScore({ ...team, playersAcquired: squadToEvaluate });
-
             let evaluation;
             try {
-                console.log(`--- EVALUATING TOP 15 FOR ${team.teamName} (${squadToEvaluate.length} players) ---`);
-                evaluation = await evaluateTeam({ ...team, playersAcquired: squadToEvaluate });
-
-                // Ensure overallScore isn't 0 if AI fails but validation passed
-                if (evaluation.overallScore === 0) evaluation.overallScore = hScore;
+                console.log(`--- EVALUATING SQUAD FOR ${team.teamName} ---`);
+                evaluation = await evaluateTeam(team);
             } catch (e) {
                 console.error(`Evaluation Error for ${team.teamName}:`, e);
-                evaluation = {
-                    battingScore: Math.round(hScore / 10),
-                    bowlingScore: Math.round(hScore / 10),
-                    balanceScore: Math.round(hScore / 10),
-                    impactScore: 7,
-                    starPlayer: "N/A",
-                    hiddenGem: "N/A",
-                    playing11: squadToEvaluate.slice(0, 11).map(p => p.name || "Unknown"),
-                    tacticalVerdict: "Heuristic evaluation complete. Squad meets minimum requirements but AI generation failed.",
-                    weakness: "Manual analysis recommended.",
-                    historicalContext: "Standard squad composition."
-                };
+                evaluation = { overallScore: 50, tacticalVerdict: "AI failed, fallback score." };
             }
-            return {
-                ...team,
-                evaluation
-            };
+            return { ...team, evaluation };
         })
     );
 
-    // Final Ranking & Tie-Breaker Phase
-    const finalRankings = await MasterRanker(evaluations);
-    return finalRankings;
+    return await MasterRanker(evaluations);
 };
 
 const MasterRanker = async (evaluations) => {
     const model = genAI.getGenerativeModel({ model: 'gemini-flash-latest' });
 
     const prompt = `
-You are the Executive Chairman of the IPL Governing Council. You have received the following team evaluations from our scouts.
-Your job is to provide the FINAL, DEFINITIVE RANKING of these franchises.
-
+Final Ranking of IPL Teams.
 Evaluations:
 ${evaluations.map(e => `- ${e.teamName}: Score ${e.evaluation.overallScore} | Verdict: ${e.evaluation.tacticalVerdict}`).join('\n')}
 
-CRITICAL RULES:
-1. **Strict Order**: You must rank them from 1 to ${evaluations.length} based on their performance and tactical quality.
-2. **No Ties**: If scores are identical, you MUST decide who is better based on the 'Expert' logic (e.g., better bowling depth, more reliable anchor, etc.). 
-3. **Tie-Breaker Reason**: If you move one team above another who has the same score, you MUST provide a short 'tieBreakerReason'.
-4. **Non-Alphabetical**: Do NOT follow team name order. Look only at quality.
-
-RESPOND ONLY WITH A VALID JSON ARRAY of objects:
-[
-  { "teamName": "Name", "rank": 1, "tieBreakerReason": "Optional if they were tied in score" },
-  ...
-]
+CRITICAL: Rank 1 to ${evaluations.length}. No ties.
+RESPOND ONLY AS JSON: [{"teamName": "Name", "rank": 1}, ...]
 `;
 
     try {
-        console.log(`--- Master Ranker Starting ---`);
         const result = await model.generateContent(prompt);
         const text = result.response.text();
         const cleanedText = text.replace(/```json/g, '').replace(/```/g, '').trim();
         const rankings = JSON.parse(cleanedText);
 
-        // Map rankings back to full data
         return evaluations.map(team => {
             const rankData = rankings.find(r => r.teamName === team.teamName);
             return {
                 ...team,
-                rank: rankData ? rankData.rank : 99,
-                tieBreakerReason: rankData ? rankData.tieBreakerReason : null
+                rank: rankData ? rankData.rank : 99
             };
         }).sort((a, b) => a.rank - b.rank);
-
     } catch (error) {
-        console.error('Error in Master Ranker:', error);
-        // Fallback to basic sort
-        return evaluations
-            .sort((a, b) => b.evaluation.overallScore - a.evaluation.overallScore)
-            .map((t, i) => ({ ...t, rank: i + 1 }));
+        return evaluations.sort((a, b) => b.evaluation.overallScore - a.evaluation.overallScore).map((t, i) => ({ ...t, rank: i + 1 }));
     }
 };
 
-module.exports = { evaluateAllTeams, selectTop15 };
+module.exports = { evaluateAllTeams, selectPlaying11AndImpact, evaluateTeam };
+

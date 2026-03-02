@@ -41,28 +41,35 @@ async function fetchAllPlayers() {
                 else if (collName === 'pool4') bp = 50;
 
                 // Format and map snake_case MongoDB stats to camelCase UI fields
-                return players.map(p => ({
-                    ...p,
-                    name: p.name || p.player || "Unknown Player",
-                    poolName: collName.replace(/_/g, ' ').toUpperCase(),
-                    poolID: collName,
-                    basePrice: bp,
-                    image: p.image_path || p.image || "/default-player.png",
-                    // Nest stats for UI compatibility
-                    stats: {
-                        battingAvg: p.batting_avg || p.battingAvg || 0,
-                        strikeRate: p.batting_strike_rate || p.strikeRate || 0,
-                        highestScore: p.highest_score || p.highestScore || 0,
-                        bowlingAvg: p.bowling_avg || p.bowlingAvg || 0,
-                        economy: p.bowling_economy || p.economy || 0,
-                        bestFigures: p.best_bowling_figures || p.bestFigures || "0/0",
-                        matches: p.matches || 0,
-                        runs: p.runs || 0,
-                        wickets: p.wickets || 0,
-                        catches: p.catches || 0,
-                        stumpings: p.stumpings || 0
-                    }
-                }));
+                return players.map(p => {
+                    const nationality = p.nationality || "";
+                    const isOverseas = p.isOverseas !== undefined ? p.isOverseas :
+                        (nationality && !["india", "ind"].includes(nationality.toLowerCase().trim()));
+
+                    return {
+                        ...p,
+                        name: p.name || p.player || "Unknown Player",
+                        isOverseas,
+                        poolName: collName.replace(/_/g, ' ').toUpperCase(),
+                        poolID: collName,
+                        basePrice: bp,
+                        image: p.image_path || p.image || "/default-player.png",
+                        // Nest stats for UI compatibility
+                        stats: {
+                            battingAvg: p.batting_avg || p.battingAvg || 0,
+                            strikeRate: p.batting_strike_rate || p.strikeRate || 0,
+                            highestScore: p.highest_score || p.highestScore || 0,
+                            bowlingAvg: p.bowling_avg || p.bowlingAvg || 0,
+                            economy: p.bowling_economy || p.economy || 0,
+                            bestFigures: p.best_bowling_figures || p.bestFigures || "0/0",
+                            matches: p.matches || 0,
+                            runs: p.runs || 0,
+                            wickets: p.wickets || 0,
+                            catches: p.catches || 0,
+                            stumpings: p.stumpings || 0
+                        }
+                    };
+                });
             })
         );
 
@@ -125,6 +132,63 @@ const roomStates = {}; // Keep active room state in memory for fast access, flus
 
 function generateRoomCode() {
     return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+/**
+ * rehydrateRoomState(roomCode)
+ * Reconstruction of the high-performance memory state from the authoritative MongoDB record.
+ * This is called if a room is missing from memory (e.g. after a server restart).
+ */
+async function rehydrateRoomState(roomCode) {
+    console.log(`[SESSION] Attempting re-hydration for room ${roomCode}...`);
+    try {
+        const roomDoc = await AuctionRoom.findOne({ roomId: roomCode }).lean();
+        if (!roomDoc) {
+            console.warn(`[SESSION] Re-hydration failed: Room ${roomCode} not found in DB`);
+            return null;
+        }
+
+        // 1. Fetch all players to rebuild the 'players' array
+        const allPlayers = await fetchAllPlayers();
+
+        // 2. Re-map the franchises and their players
+        const teams = (roomDoc.franchisesInRoom || []).map(t => ({
+            ...t,
+            id: t.franchiseId, // map for UI
+            playersAcquired: t.playersAcquired || []
+        }));
+
+        // 3. Reconstruct memory state
+        roomStates[roomCode] = {
+            roomCode: roomDoc.roomId,
+            roomType: roomDoc.type || 'private',
+            host: roomDoc.hostSocketId,
+            hostName: roomDoc.hostName || 'Host',
+            hostUserId: roomDoc.hostUserId,
+            status: roomDoc.status || 'Lobby',
+            players: allPlayers,
+            currentIndex: roomDoc.currentPlayerIndex || 0,
+            teams: teams,
+            spectators: [],
+            joinRequests: [],
+            availableTeams: roomDoc.availableTeams || [],
+            currentBid: {
+                amount: roomDoc.currentBidAmount || 0,
+                teamId: roomDoc.highestBidderTeamId,
+                teamName: null // will be matched during join if needed
+            },
+            timer: 0,
+            timerDuration: roomDoc.purseLimit === 12000 ? 10 : 15, // fallback detection logic
+            isReAuctionRound: false,
+            unsoldHistory: []
+        };
+
+        console.log(`[SESSION] Room ${roomCode} re-hydrated successfully.`);
+        return roomStates[roomCode];
+    } catch (err) {
+        console.error(`[SESSION] Re-hydration error for ${roomCode}:`, err);
+        return null;
+    }
 }
 
 const setupSocketHandlers = (io) => {
@@ -222,7 +286,9 @@ const setupSocketHandlers = (io) => {
                     unsoldPlayers: playerIds,
                     franchisesInRoom: [],
                     availableTeams: normalizedFranchises,
-                    currentPlayerIndex: 0
+                    currentPlayerIndex: 0,
+                    hostUserId: userId,      // Store host's permanent ID in DB immediately
+                    hostName: playerName     // Store host's name in DB
                 });
                 await newRoom.save();
 
@@ -269,7 +335,12 @@ const setupSocketHandlers = (io) => {
 
             console.log(`[SESSION] join_room: roomCode=${roomCode}, userId=${userId}, playerName=${playerName}`);
             try {
-                const state = roomStates[roomCode];
+                let state = roomStates[roomCode];
+                if (!state) {
+                    // Try to re-hydrate from DB
+                    state = await rehydrateRoomState(roomCode);
+                }
+
                 if (!state) {
                     return socket.emit('error', 'Room not found or not active');
                 }
@@ -522,12 +593,14 @@ const setupSocketHandlers = (io) => {
             const senderName = team ? team.ownerName : 'Host';
             const senderTeam = team ? team.teamName : 'System';
             const senderColor = team ? team.teamThemeColor : '#ffffff';
+            const senderLogo = team ? team.teamLogo : null;
 
             io.to(roomCode).emit('receive_chat_message', {
                 id: Date.now() + Math.random(),
                 senderName,
                 senderTeam,
                 senderColor,
+                senderLogo,
                 message,
                 timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
             });
@@ -750,6 +823,10 @@ const setupSocketHandlers = (io) => {
         socket.on('resume_auction', ({ roomCode }) => {
             const state = roomStates[roomCode];
             if (!state || (socket.userId && state.hostUserId !== socket.userId) || (!socket.userId && state.host !== socket.id) || state.status !== 'Paused') return socket.emit('error', 'Unauthorized: Only the host can resume the auction.');
+
+            if (state.votingSession && state.votingSession.active) {
+                return socket.emit('error', 'Cannot resume auction while voting is in progress.');
+            }
             state.status = 'Auctioning';
 
             // Re-sync timer Ends At based on how much time was remaining
@@ -787,8 +864,8 @@ const setupSocketHandlers = (io) => {
             }
         });
 
-        // Selection Phase Handlers
-        socket.on('manual_select_playing_15', async ({ roomCode, playerIds }) => {
+        // Selection Phase Handlers (11 + 4 Impact Players)
+        socket.on('manual_select_squad', async ({ roomCode, playing11Ids, impactPlayerIds }) => {
             const state = roomStates[roomCode];
             if (!state || state.status !== 'Selection') return;
 
@@ -798,17 +875,28 @@ const setupSocketHandlers = (io) => {
             );
             if (teamIndex === -1) return;
 
-            state.teams[teamIndex].playing15 = playerIds;
-            socket.emit('selection_confirmed', { playing15: playerIds });
+            state.teams[teamIndex].playing11 = playing11Ids;
+            state.teams[teamIndex].impactPlayers = impactPlayerIds;
+
+            socket.emit('selection_confirmed', {
+                playing11: playing11Ids,
+                impactPlayers: impactPlayerIds
+            });
+
+            // Start background evaluation immediately
+            triggerBackgroundEvaluation(roomCode, teamIndex, io);
 
             // Check if all teams are done
-            const allDone = state.teams.every(t => t.playing15 && t.playing15.length >= 15);
+            const allDone = state.teams.every(t =>
+                t.playing11 && t.playing11.length === 11 &&
+                t.impactPlayers && t.impactPlayers.length === 4
+            );
             if (allDone) {
                 finalizeResults(roomCode, io);
             }
         });
 
-        socket.on('auto_select_playing_15', async ({ roomCode }) => {
+        socket.on('auto_select_squad', async ({ roomCode }) => {
             const state = roomStates[roomCode];
             if (!state || state.status !== 'Selection') return;
 
@@ -819,9 +907,8 @@ const setupSocketHandlers = (io) => {
             if (teamIndex === -1) return;
 
             const team = state.teams[teamIndex];
-            const { selectTop15 } = require('../services/aiRating');
+            const { selectPlaying11AndImpact } = require('../services/aiRating');
 
-            // Need full player data for AI — use cross-collection lookup
             if (!team.playersAcquired) return;
 
             const playersWithData = await Promise.all(team.playersAcquired.map(async (p) => {
@@ -829,16 +916,170 @@ const setupSocketHandlers = (io) => {
                 return { ...p, player: data };
             }));
 
-            const selectedIds = await selectTop15(team.teamName, playersWithData);
-            state.teams[teamIndex].playing15 = selectedIds;
+            const selection = await selectPlaying11AndImpact(team.teamName, playersWithData);
+            state.teams[teamIndex].playing11 = selection.playing11;
+            state.teams[teamIndex].impactPlayers = selection.impactPlayers;
 
-            socket.emit('selection_confirmed', { playing15: selectedIds });
+            socket.emit('selection_confirmed', {
+                playing11: selection.playing11,
+                impactPlayers: selection.impactPlayers
+            });
 
-            const allDone = state.teams.every(t => t.playing15 && t.playing15.length >= 15);
+            // Start background evaluation immediately
+            triggerBackgroundEvaluation(roomCode, teamIndex, io);
+
+            const allDone = state.teams.every(t =>
+                t.playing11 && t.playing11.length === 11 &&
+                t.impactPlayers && t.impactPlayers.length === 4
+            );
             if (allDone) {
                 finalizeResults(roomCode, io);
             }
         });
+
+        // --- INTEREST VOTING (Pool 3 & 4) ---
+        socket.on('start_interest_voting', ({ roomCode }) => {
+            const state = roomStates[roomCode];
+            if (!state || state.host !== socket.id) return;
+
+            // Find all upcoming Pool 3 and Pool 4 players
+            const currentPlayer = state.players[state.currentIndex];
+            if (!currentPlayer || currentPlayer.poolID !== 'pool2_bowlers') {
+                return socket.emit('error', 'Interest voting for Pool 3 & 4 can only be started during the Pool 2 Bowlers phase.');
+            }
+
+            const votingPool = state.players.slice(state.currentIndex).filter(p => ['pool3', 'pool4'].includes(p.poolID));
+
+            if (votingPool.length === 0) {
+                return socket.emit('error', 'No Pool 3 or Pool 4 players remaining for voting');
+            }
+
+            state.votingSession = {
+                active: true,
+                isFinal: false,
+                players: votingPool.map(p => ({ id: String(p._id), name: p.name || p.player, poolID: p.poolID })),
+                playersData: votingPool, // Store actual objects here
+                votes: {}, // teamId -> [playerIds]
+                endsAt: Date.now() + 180000 // 3 minutes to vote
+            };
+
+            io.to(roomCode).emit('interest_voting_started', {
+                players: state.votingSession.players,
+                timer: 180,
+                isFinal: false
+            });
+
+            // Pause the auction if it's currently running
+            if (state.status === 'Auctioning') {
+                state.status = 'Paused';
+                state.wasRunningBeforeVoting = true;
+                if (roomTimers[roomCode]) clearInterval(roomTimers[roomCode]);
+                io.to(roomCode).emit('auction_paused', {
+                    state,
+                    message: "Auction automatically paused for Interest Voting."
+                });
+            }
+
+            // Auto-calculate after 30s
+            setTimeout(() => {
+                const refreshedState = roomStates[roomCode];
+                if (refreshedState && refreshedState.votingSession && refreshedState.votingSession.active) {
+                    processVotingResults(roomCode, io);
+                }
+            }, 180500);
+        });
+
+        socket.on('submit_interest_votes', ({ roomCode, playerIds }) => {
+            const state = roomStates[roomCode];
+            if (!state || !state.votingSession || !state.votingSession.active) return;
+
+            const team = state.teams.find(t => t.ownerSocketId === socket.id);
+            if (!team) return;
+
+            state.votingSession.votes[team.franchiseId] = playerIds;
+
+            // If all teams voted, we could potentially end early, but let's stick to the timer for simplicity
+            // or if the user wants "continue with polled votes" if they don't vote.
+        });
+
+        const processVotingResults = (roomCode, io) => {
+            const state = roomStates[roomCode];
+            if (!state || !state.votingSession) return;
+
+            const isFinal = !!state.votingSession.isFinal;
+            const allVotedPlayerIds = new Set();
+            Object.values(state.votingSession.votes).forEach(votedList => {
+                votedList.forEach(id => allVotedPlayerIds.add(String(id)));
+            });
+
+            const totalInSession = state.votingSession.players.length;
+            const skippedCount = totalInSession - allVotedPlayerIds.size;
+            const votingSessionIds = state.votingSession.players.map(p => p.id);
+
+            if (isFinal) {
+                // Final session: state.players becomes ONLY the survivors
+                const survivedPlayers = state.votingSession.playersData.filter(p => allVotedPlayerIds.has(String(p._id)));
+                state.players = survivedPlayers;
+                state.currentIndex = 0;
+            } else {
+                // Normal session: Move skipped to history, remove from sequence
+                const skippedFromThisSession = [];
+                state.players = state.players.filter(p => {
+                    const pid = String(p._id);
+                    const isPart = votingSessionIds.includes(pid);
+                    const isVoted = allVotedPlayerIds.has(pid);
+
+                    if (isPart && !isVoted) {
+                        skippedFromThisSession.push(p);
+                        return false;
+                    }
+                    return true;
+                });
+
+                if (!state.skippedHistory) state.skippedHistory = [];
+                state.skippedHistory.push(...skippedFromThisSession.map(p => ({ ...p, isSkipped: true, originalPool: p.poolName })));
+            }
+
+            state.votingSession.active = false;
+
+            io.to(roomCode).emit('interest_voting_completed', {
+                skippedCount,
+                isFinal,
+                message: isFinal
+                    ? `Final voting completed. ${skippedCount} players permanently skipped.`
+                    : `Interest voting completed. ${skippedCount} players moved to the end as skipped.`
+            });
+
+            io.to(roomCode).emit('receive_chat_message', {
+                id: Date.now(),
+                senderName: 'System',
+                senderTeam: 'System',
+                senderColor: '#ef4444',
+                message: isFinal
+                    ? `Final Voting Complete! ${skippedCount} players permanently removed. Starting re-auction.`
+                    : `Voting complete! ${skippedCount} players moved to end-of-auction queue.`,
+                timestamp: new Date().toLocaleTimeString()
+            });
+
+            // If it was final, trigger the re-auction phase transition
+            if (isFinal) {
+                setTimeout(() => handleAuctionEndTransition(roomCode, io), 2000);
+            } else if (state.wasRunningBeforeVoting) {
+                // Auto-resume if it was running before the vote
+                state.wasRunningBeforeVoting = false;
+                state.status = 'Auctioning';
+
+                if (state.timer > 0 && state.currentIndex < state.players.length) {
+                    state.timerEndsAt = Date.now() + (state.timer * 1000);
+                    if (roomTimers[roomCode]) clearInterval(roomTimers[roomCode]);
+                    roomTimers[roomCode] = setInterval(() => {
+                        tickTimer(roomCode, io);
+                    }, 500);
+                }
+
+                io.to(roomCode).emit('auction_resumed', { state });
+            }
+        };
 
         socket.on('disconnect', () => {
             console.log(`User disconnected: ${socket.id}`);
@@ -898,7 +1139,12 @@ function loadNextPlayer(roomCode, io) {
     state.timerEndsAt = Date.now() + (state.timerDuration * 1000);
     state.timer = state.timerDuration;
 
-    io.to(roomCode).emit('new_player', { player, nextPlayers, timer: state.timer });
+    io.to(roomCode).emit('new_player', {
+        player,
+        nextPlayers,
+        timer: state.timer,
+        skippedHistory: state.skippedHistory || []
+    });
 
     if (roomTimers[roomCode]) clearInterval(roomTimers[roomCode]);
 
@@ -923,8 +1169,15 @@ function tickTimer(roomCode, io) {
     }
 
     if (state.timer <= 0) {
-        clearInterval(roomTimers[roomCode]);
-        processHammerDown(roomCode, io);
+        // Nano-second grace period: Wait 500ms at zero before hammer down
+        // to catch late bids from the network
+        setTimeout(() => {
+            const recheckState = roomStates[roomCode];
+            if (recheckState && recheckState.status === 'Auctioning' && recheckState.timer <= 0) {
+                clearInterval(roomTimers[roomCode]);
+                processHammerDown(roomCode, io);
+            }
+        }, 500);
     }
 }
 
@@ -947,6 +1200,8 @@ async function processHammerDown(roomCode, io) {
             state.teams[winningTeamIndex].playersAcquired.push({
                 player: player._id,
                 name: playerName,
+                role: player.role,
+                nationality: player.nationality,
                 isOverseas: player.isOverseas,
                 boughtFor: state.currentBid.amount,
                 basePrice: player.basePrice,
@@ -1046,15 +1301,57 @@ async function handleAuctionEndTransition(roomCode, io) {
     const state = roomStates[roomCode];
     if (!state) return;
 
-    // Check if there are unsold players and if we already did re-auction
-    if (!state.isReAuctionRound) {
+    // Phase 1: If we just finished normal pools, trigger Final Voting for (Unsold + Skipped)
+    if (!state.isReAuctionRound && !state.finalVotingSessionTriggered) {
         const allSoldPlayerIds = state.teams.flatMap(t => t.playersAcquired.map(p => String(p.player)));
         const unsoldPlayers = state.players.filter(p => !allSoldPlayerIds.includes(String(p._id)));
+        const finalPool = [...unsoldPlayers, ...(state.skippedHistory || [])];
 
-        if (unsoldPlayers.length > 0) {
-            console.log(`\n--- STARTING RE-AUCTION ROUND FOR ${unsoldPlayers.length} UNSOLD PLAYERS ---`);
+        if (finalPool.length > 0) {
+            state.finalVotingSessionTriggered = true;
+
+            io.to(roomCode).emit('receive_chat_message', {
+                id: Date.now(),
+                senderName: 'System',
+                senderTeam: 'System',
+                senderColor: '#ff0000',
+                message: "Main auction finished. Starting Final Interest Voting for Unsold & Skipped players!",
+                timestamp: new Date().toLocaleTimeString()
+            });
+
+            // Trigger voting session for the combined pool
+            state.votingSession = {
+                active: true,
+                isFinal: true,
+                players: finalPool.map(p => ({ id: String(p._id), name: p.name || p.player, poolID: p.poolID })),
+                votes: {},
+                endsAt: Date.now() + 180000
+            };
+
+            io.to(roomCode).emit('interest_voting_started', {
+                players: state.votingSession.players,
+                timer: 180,
+                isFinal: true
+            });
+
+            setTimeout(() => {
+                const refreshedState = roomStates[roomCode];
+                if (refreshedState && refreshedState.votingSession && refreshedState.votingSession.active) {
+                    processVotingResults(roomCode, io);
+                }
+            }, 180500);
+            return;
+        }
+    }
+
+    // Phase 2: Start the actual Re-Auction with players who survived final voting
+    if (!state.isReAuctionRound) {
+        if (state.players.length > state.currentIndex) {
+            console.log(`\n--- STARTING RE-AUCTION ROUND FOR ${state.players.length - state.currentIndex} SURVIVING PLAYERS ---`);
             state.isReAuctionRound = true;
-            state.players = unsoldPlayers;
+            // state.currentIndex remains where it is? No, usually we reset for re-auction
+            // but in my new logic, state.players was filtered during processVotingResults.
+            // Let's ensure state.players ONLY contains those who survived.
             state.currentIndex = 0;
 
             io.to(roomCode).emit('receive_chat_message', {
@@ -1062,7 +1359,7 @@ async function handleAuctionEndTransition(roomCode, io) {
                 senderName: 'System',
                 senderTeam: 'System',
                 senderColor: '#ff0000',
-                message: "Starting re-auction round for all unsold players!",
+                message: "Starting re-auction round for interested players!",
                 timestamp: new Date().toLocaleTimeString()
             });
 
@@ -1071,7 +1368,7 @@ async function handleAuctionEndTransition(roomCode, io) {
         }
     }
 
-    // If no unsold players or already finished re-auction
+    // If no players survived voting or already finished re-auction
     endAuction(roomCode, io);
 }
 
@@ -1096,7 +1393,9 @@ async function endAuction(roomCode, io) {
     try {
         await AuctionRoom.findOneAndUpdate({ roomId: roomCode }, {
             status: 'Selection',
-            franchisesInRoom: state.teams
+            franchisesInRoom: state.teams,
+            hostUserId: state.hostUserId,
+            hostName: state.hostName
         });
     } catch (err) {
         console.error("Error transitioning to selection:", err);
@@ -1136,69 +1435,212 @@ function tickSelectionTimer(roomCode, io) {
     }
 }
 
+async function triggerBackgroundEvaluation(roomCode, teamIndex, io) {
+    const state = roomStates[roomCode];
+    if (!state) return;
+
+    const team = state.teams[teamIndex];
+    if (!team || !team.playing11 || !team.impactPlayers) return;
+
+    console.log(`[AI-BACKGROUND] Starting evaluation for ${team.teamName} in room ${roomCode}...`);
+
+    try {
+        const { evaluateTeam } = require('../services/aiRating');
+
+        // Prepare player data for AI
+        // Populate rich player data for the evaluation
+        const playersWithData = await Promise.all(team.playersAcquired.map(async (p) => {
+            const data = await findPlayerById(p.player);
+            const nat = (data?.nationality || "").toLowerCase().trim();
+            const isOverseas = nat && !["india", "indian", "ind"].includes(nat);
+
+            return {
+                player: p.player, // Essential for Mongoose persistence
+                name: data?.player || data?.name || p.name,
+                role: data?.role,
+                nationality: data?.nationality,
+                image_path: data?.image_path || data?.imagepath || data?.photoUrl,
+                isOverseas: isOverseas,
+                boughtFor: p.boughtFor,
+                stats: data?.stats || {}
+            };
+        }));
+
+        // Also update the in-memory squad with rich data for the results view
+        state.teams[teamIndex].playersAcquired = playersWithData;
+
+        // Attach logo if missing
+        if (!state.teams[teamIndex].logoUrl) {
+            const teamInfo = IPL_TEAMS.find(t => t.id === state.teams[teamIndex].id || t.id === state.teams[teamIndex].teamName?.substring(0, 4));
+            if (!teamInfo) {
+                // Try matching by name
+                const byName = IPL_TEAMS.find(t => state.teams[teamIndex].teamName?.toLowerCase().includes(t.name.toLowerCase()));
+                if (byName) state.teams[teamIndex].logoUrl = byName.logoUrl;
+            } else {
+                state.teams[teamIndex].logoUrl = teamInfo.logoUrl;
+            }
+        }
+
+        const evaluationData = {
+            teamName: team.teamName,
+            currentPurse: team.currentPurse,
+            playersAcquired: playersWithData.map(p => ({ ...p, id: String(p.player) })),
+            playing11: team.playing11 || [],
+            impactPlayers: team.impactPlayers || []
+        };
+
+        const evaluation = await evaluateTeam(evaluationData);
+        state.teams[teamIndex].evaluation = evaluation;
+        console.log(`[AI-BACKGROUND] Completed evaluation for ${team.teamName}.`);
+
+    } catch (err) {
+        console.error(`[AI-BACKGROUND] Error evaluating ${team.teamName}:`, err);
+    }
+}
+
 async function finalizeResults(roomCode, io) {
     const state = roomStates[roomCode];
     if (!state) return;
 
-    state.status = 'Finished';
+    // Prevent duplicate finalization
+    if (state.status === 'Finished' || state.isFinalizing) return;
+    state.isFinalizing = true;
 
     try {
-        const { evaluateAllTeams } = require('../services/aiRating');
-        const Player = require('../models/Player');
+        io.to(roomCode).emit('receive_chat_message', {
+            id: Date.now(),
+            senderName: 'System',
+            senderTeam: 'System',
+            senderColor: '#ff0000',
+            message: "Crunching numbers... Final team evaluations and rankings incoming!",
+            timestamp: new Date().toLocaleTimeString()
+        });
 
-        // 1. Prepare teams with full player data for AI
-        // Use findPlayerById to search across all pool collections (marquee, pool1_*, etc.)
-        const teamsToEvaluate = await Promise.all(state.teams.map(async (team) => {
-            const playersWithData = await Promise.all(team.playersAcquired.map(async (p) => {
+        // 1. Wait for any background evaluations that might still be running
+        // We'll poll for up to 20 seconds
+        let attempts = 0;
+        const maxAttempts = 20;
+
+        while (attempts < maxAttempts) {
+            const allEvaluated = state.teams.every(t => t.evaluation);
+            if (allEvaluated) break;
+
+            console.log(`[AI-FINALIZE] Waiting for background evaluations (Attempt ${attempts + 1}/${maxAttempts})...`);
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            attempts++;
+        }
+
+        // 1.5 Populate ALL teams with rich player data and logos before evaluation/ranking
+        await Promise.all(state.teams.map(async (team, index) => {
+            const richPlayers = await Promise.all(team.playersAcquired.map(async (p) => {
                 const data = await findPlayerById(p.player);
+                const nat = (data?.nationality || "").toLowerCase().trim();
+                const isOverseas = nat && !["india", "indian", "ind"].includes(nat);
+
                 return {
-                    id: String(p.player),
+                    player: p.player,
                     name: data?.player || data?.name || p.name,
                     role: data?.role,
                     nationality: data?.nationality,
+                    image_path: data?.image_path || data?.imagepath || data?.photoUrl,
+                    isOverseas: isOverseas,
                     boughtFor: p.boughtFor,
                     stats: data?.stats || {}
                 };
             }));
+            state.teams[index].playersAcquired = richPlayers;
 
-            // Fallback for playing15 (Random Selection for Timeout)
-            let playing15;
-            if (team.playing15 && team.playing15.length > 0) {
-                playing15 = team.playing15.map(id => String(id));
-            } else {
-                console.log(`[TIMEOUT] Randomly selecting 15 players for ${team.teamName}`);
-                // Shuffle and pick 15
-                const shuffled = [...team.playersAcquired].sort(() => 0.5 - Math.random());
-                playing15 = shuffled.slice(0, 15).map(p => String(p.player));
+            // Attach logo from master list
+            if (!state.teams[index].logoUrl) {
+                // Try better matching for logos
+                const teamInfo = IPL_TEAMS.find(t => t.id === team.id || t.id === team.teamId || team.teamName?.includes(t.name) || team.teamName?.includes(t.id));
+                if (teamInfo) state.teams[index].logoUrl = teamInfo.logoUrl;
+                else {
+                    // Fallback to name search
+                    const byName = IPL_TEAMS.find(t => team.teamName?.toLowerCase().includes(t.name.toLowerCase()));
+                    if (byName) state.teams[index].logoUrl = byName.logoUrl;
+                }
             }
-
-            return {
-                teamName: team.teamName,
-                currentPurse: team.currentPurse,
-                playersAcquired: playersWithData,
-                playing15: playing15
-            };
         }));
 
-        // 2. Perform AI Evaluation (Unbiased & Persisted)
-        console.log(`--- EVALUATING TEAMS FOR ROOM ${roomCode} ---`);
-        const evaluatedResults = await evaluateAllTeams(teamsToEvaluate);
+        const { evaluateAllTeams, evaluateTeam } = require('../services/aiRating');
 
-        // 3. Merge results back into original state.teams to preserve all metadata
+        // 2. Ensure every team has an evaluation (fallback for those that didn't submit/background failed)
+        await Promise.all(state.teams.map(async (team, index) => {
+            if (!team.evaluation) {
+                console.log(`[AI-FINALIZE] Falling back to synchronous evaluation for ${team.teamName}`);
+
+                // Use the already populated rich data
+                const playersWithData = team.playersAcquired;
+
+                let playing11 = team.playing11 || [];
+                let impactPlayers = team.impactPlayers || [];
+
+                // Fallback selection if still missing
+                if (playing11.length < 11 || impactPlayers.length < 4) {
+                    const { selectPlaying11AndImpact } = require('../services/aiRating');
+                    const selection = await selectPlaying11AndImpact(team.teamName, playersWithData);
+                    playing11 = selection.playing11;
+                    impactPlayers = selection.impactPlayers;
+                }
+
+                const evaluationData = {
+                    teamName: team.teamName,
+                    currentPurse: team.currentPurse,
+                    playersAcquired: playersWithData,
+                    playing11: playing11.map(id => String(id)),
+                    impactPlayers: impactPlayers.map(id => String(id))
+                };
+
+                state.teams[index].evaluation = await evaluateTeam(evaluationData);
+                state.teams[index].playing11 = playing11;
+                state.teams[index].impactPlayers = impactPlayers;
+            }
+        }));
+
+        // 3. Final Ranking (Using MasterRanker logic or evaluateAllTeams wrapper)
+        // Since we have individual evaluations, we just need to rank them
+        const teamsForRanking = state.teams.map(t => ({
+            teamName: t.teamName,
+            evaluation: t.evaluation
+        }));
+
+        // Run the MasterRanker (internal to evaluateAllTeams in current service)
+        // Let's call evaluateAllTeams but it will be fast since we've pre-evaluated?
+        // Actually, evaluateAllTeams evaluates everyone again. Let's just use the MasterRanker directly.
+        // Wait, MasterRanker is not exported. Let me just use evaluateAllTeams for now, 
+        // OR better, modify aiRating.js to export MasterRanker.
+
+        // Actually, let's just re-evaluate everyone in one go to ensure ranking synergy?
+        // No, the user wants background work. 
+        // I will update evaluateAllTeams to take pre-calculated evaluations if available.
+
+        // For now, let's just use the existing finalize logic but with the pre-evaluated data
+        const evaluatedResults = await evaluateAllTeams(state.teams.map(t => ({
+            teamName: t.teamName,
+            currentPurse: t.currentPurse,
+            playersAcquired: t.playersAcquired.map(p => ({ ...p, id: String(p.player) })), // minimal data needed if pre-evaluated
+            playing11: t.playing11,
+            impactPlayers: t.impactPlayers,
+            evaluation: t.evaluation // PASS PRE-CALCULATED EVAL
+        })));
+
+        state.status = 'Finished';
         state.teams = state.teams.map(originalTeam => {
             const evalResult = evaluatedResults.find(r => r.teamName === originalTeam.teamName);
             return {
                 ...originalTeam,
                 evaluation: evalResult?.evaluation,
-                rank: evalResult?.rank,
-                playing15: evalResult?.playing15 || originalTeam.playing15 // Persist selected/random playing 15
+                rank: evalResult?.rank
             };
         });
 
-        // 4. Persistence
+        // 4. Update MongoDB to finalize status and evaluation
         await AuctionRoom.findOneAndUpdate({ roomId: roomCode }, {
             status: 'Finished',
-            franchisesInRoom: state.teams
+            franchisesInRoom: state.teams,
+            hostUserId: state.hostUserId,
+            hostName: state.hostName
         });
 
         console.log(`--- PERSISTED RESULTS FOR ROOM ${roomCode} ---`);

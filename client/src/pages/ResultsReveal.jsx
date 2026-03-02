@@ -24,8 +24,8 @@ const ResultsReveal = () => {
             .then(data => {
                 const map = {};
                 data.forEach(p => {
-                    map[p._id] = p.player || p.name;
-                    if (p.playerId) map[p.playerId] = p.player || p.name;
+                    map[p._id] = p;
+                    if (p.playerId) map[p.playerId] = p;
                 });
                 setAllPlayersMap(map);
             })
@@ -62,31 +62,35 @@ const ResultsReveal = () => {
         setIsSharing(true);
 
         try {
-            // Wait a bit for the hidden component to be sure it's in the DOM
-            await new Promise(resolve => setTimeout(resolve, 500));
+            console.log("Starting share card generation for:", selectedTeam.teamName);
+            // Wait for images to potentially load and layout to stabilize
+            await new Promise(resolve => setTimeout(resolve, 800));
 
             const node = document.getElementById('team-share-card');
-            if (!node) throw new Error("Share card node not found");
+            if (!node) throw new Error("Share card element not found in DOM");
 
-            // Generate PNG data URL
+            // Generate PNG data URL with better settings for high quality
             const dataUrl = await toPng(node, {
                 cacheBust: true,
-                pixelRatio: 2,
+                pixelRatio: 3, // Higher quality
                 skipFonts: false,
+                backgroundColor: selectedTeam.teamThemeColor || '#000000',
             });
 
-            if (!dataUrl) throw new Error("Failed to generate image data URL");
+            if (!dataUrl || dataUrl.length < 100) {
+                throw new Error("Generated image is empty or too small");
+            }
 
             const fileName = `${selectedTeam.teamName.replace(/\s+/g, '_')}_Squad.png`;
 
             // Convert dataUrl to blob
-            const response = await fetch(dataUrl);
-            const blob = await response.blob();
+            const blobResponse = await fetch(dataUrl);
+            const blob = await blobResponse.blob();
             const file = new File([blob], fileName, { type: 'image/png' });
 
             const shareData = {
-                title: `${selectedTeam.teamName} Squad - IPL Auction 2025`,
-                text: `Check out my ${selectedTeam.teamName} squad! Overall Score: ${selectedTeam.evaluation?.overallScore}/100. Star Player: ${selectedTeam.evaluation?.starPlayer}. #IPLAuction2025`,
+                title: `${selectedTeam.teamName} Squad - IPL Auction Verdict`,
+                text: `Verified: My ${selectedTeam.teamName} squad! Final Score: ${selectedTeam.evaluation?.overallScore}/100. Star Player: ${selectedTeam.evaluation?.starPlayer}. #IPLAuctionVerdict`,
                 files: [file]
             };
 
@@ -102,12 +106,18 @@ const ResultsReveal = () => {
                 link.click();
                 document.body.removeChild(link);
 
+                // Open WhatsApp fallback
                 const whatsappMsg = encodeURIComponent(shareData.text);
-                window.open(`https://wa.me/?text=${whatsappMsg}`, '_blank');
+                setTimeout(() => {
+                    window.open(`https://wa.me/?text=${whatsappMsg}`, '_blank');
+                }, 500);
             }
         } catch (err) {
-            console.error("Sharing failed detail:", err);
-            setToast({ message: `Failed to generate or share team card: ${err.message || 'Unknown error'}. Please try again.`, type: 'error' });
+            console.error("DEBUG: Sharing failed deeply:", err);
+            setToast({
+                message: `Share failed: ${err.message || 'Unknown render error'}. Hint: Ensure you have a stable connection.`,
+                type: 'error'
+            });
         } finally {
             setIsSharing(false);
         }
@@ -137,7 +147,17 @@ const ResultsReveal = () => {
         <div className="min-h-screen bg-darkBg text-white p-4 sm:p-8 relative overflow-hidden font-sans">
 
             {/* Hidden TeamShareCard for capture */}
-            <div style={{ position: 'absolute', left: '-9999px', top: '-9999px' }}>
+            {/* Stabilized hidden container for capture */}
+            <div
+                style={{
+                    position: 'fixed',
+                    left: '-2000px',
+                    top: '0',
+                    zIndex: -1,
+                    visibility: 'visible',
+                    pointerEvents: 'none'
+                }}
+            >
                 <TeamShareCard team={selectedTeam} allPlayersMap={allPlayersMap} />
             </div>
 
@@ -149,15 +169,15 @@ const ResultsReveal = () => {
 
             <div className="relative z-10 max-w-7xl mx-auto">
                 <header className="flex flex-col sm:flex-row justify-between items-start sm:items-end mb-8 md:mb-16 gap-6">
-                    <div>
+                    <div className="w-full sm:w-auto text-center sm:text-left">
                         <h1 className="text-[8px] md:text-[10px] font-black text-slate-500 uppercase tracking-[0.4em] mb-2">Auction Concluded / Final Review</h1>
-                        <h2 className="text-4xl sm:text-5xl lg:text-6xl xl:text-7xl font-black italic tracking-tighter uppercase leading-none">
+                        <h2 className="text-4xl sm:text-5xl lg:text-7xl font-black italic tracking-tighter uppercase leading-none">
                             The <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-400">Verdict</span>
                         </h2>
                     </div>
                     <button
                         onClick={() => navigate('/')}
-                        className="w-full sm:w-auto px-6 py-3 glass-panel rounded-xl border-white/10 hover:bg-white/10 transition-colors text-[10px] font-black uppercase tracking-widest"
+                        className="w-full sm:w-auto px-6 py-4 glass-panel rounded-2xl border-white/10 hover:bg-white/10 transition-colors text-[10px] font-black uppercase tracking-widest shadow-lg"
                     >
                         Back to Lobby
                     </button>
@@ -183,12 +203,51 @@ const ResultsReveal = () => {
                                 <div className="absolute top-0 left-0 w-1.5 h-full" style={{ backgroundColor: team.teamThemeColor }}></div>
                                 <div className="flex justify-between items-center">
                                     <div>
-                                        <div className="text-[9px] font-black uppercase tracking-widest opacity-50 mb-1" style={{ color: team.teamThemeColor }}>#{team.rank} {team.rank === 1 ? 'Winner' : 'Ranked'}</div>
-                                        <div className="text-xl font-black uppercase tracking-tight">{team.teamName}</div>
+                                        <div className="mb-2 flex items-center gap-2">
+                                            {team.evaluation?.overallScore === 0 ? (
+                                                <span className="text-[10px] font-black uppercase tracking-widest text-red-500 bg-red-500/10 px-3 py-1 rounded-full border border-red-500/20">❌ Disqualified</span>
+                                            ) : (
+                                                <div className="flex items-center gap-4">
+                                                    {team.rank === 1 && (
+                                                        <div className="flex items-center gap-3 bg-gradient-to-r from-yellow-500/30 to-yellow-600/10 border border-yellow-500/50 px-6 py-2 rounded-2xl shadow-[0_0_20px_rgba(234,179,8,0.2)]">
+                                                            <span className="text-6xl drop-shadow-2xl translate-y-[-4px]">🥇</span>
+                                                            <div className="flex flex-col">
+                                                                <span className="text-[10px] font-black uppercase tracking-[0.2em] text-yellow-500/70">Winner</span>
+                                                                <span className="text-sm font-black uppercase tracking-widest text-yellow-400">CHAMPION</span>
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                    {team.rank === 2 && (
+                                                        <div className="flex items-center gap-3 bg-gradient-to-r from-slate-400/30 to-slate-500/10 border border-slate-400/50 px-6 py-2 rounded-2xl shadow-[0_0_20px_rgba(148,163,184,0.2)]">
+                                                            <span className="text-6xl drop-shadow-2xl translate-y-[-4px]">🥈</span>
+                                                            <div className="flex flex-col">
+                                                                <span className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400/70">Finalist</span>
+                                                                <span className="text-sm font-black uppercase tracking-widest text-slate-300">RUNNER UP</span>
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                    {team.rank === 3 && (
+                                                        <div className="flex items-center gap-3 bg-gradient-to-r from-orange-600/30 to-orange-700/10 border border-orange-600/50 px-6 py-2 rounded-2xl shadow-[0_0_20px_rgba(234,88,12,0.2)]">
+                                                            <span className="text-6xl drop-shadow-2xl translate-y-[-4px]">🥉</span>
+                                                            <div className="flex flex-col">
+                                                                <span className="text-[10px] font-black uppercase tracking-[0.2em] text-orange-600/70">Podium</span>
+                                                                <span className="text-sm font-black uppercase tracking-widest text-orange-500">3RD PLACE</span>
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                    {team.rank > 3 && (
+                                                        <span className="text-[11px] font-black uppercase tracking-[0.3em] opacity-60" style={{ color: team.teamThemeColor }}>
+                                                            #{team.rank} RANKED
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                        <div className={`text-xl font-black uppercase tracking-tight ${team.evaluation?.overallScore === 0 ? 'text-red-500/50 line-through' : ''}`}>{team.teamName}</div>
                                         <div className="text-[10px] text-slate-500 font-bold uppercase">{team.ownerName}</div>
                                     </div>
                                     <div className="text-right">
-                                        <div className="text-3xl font-black font-mono" style={{ color: team.teamThemeColor }}>{team.evaluation?.overallScore}</div>
+                                        <div className="text-3xl font-black font-mono" style={{ color: team.evaluation?.overallScore === 0 ? '#ef4444' : team.teamThemeColor }}>{team.evaluation?.overallScore}</div>
                                         <div className="text-[8px] font-black text-slate-500 uppercase tracking-widest">Global Score</div>
                                     </div>
                                 </div>
@@ -209,38 +268,38 @@ const ResultsReveal = () => {
                                 >
                                     {/* Team Header */}
                                     <div className="flex flex-col md:flex-row justify-between items-start mb-8 md:mb-12 gap-8">
-                                        <div className="flex-1 min-w-0">
+                                        <div className="flex-1 min-w-0 w-full">
                                             <div className="flex items-center gap-4 mb-4">
                                                 <div className="w-3 h-6 md:w-4 md:h-12 rounded-full shrink-0" style={{ backgroundColor: selectedTeam.teamThemeColor }}></div>
                                                 <h2 className="text-2xl sm:text-3xl lg:text-4xl xl:text-5xl font-black uppercase tracking-tighter italic truncate">{selectedTeam.teamName}</h2>
                                             </div>
-                                            <p className="text-slate-300 font-bold max-w-lg leading-relaxed text-xs md:text-sm">
+                                            <p className="text-slate-300 font-bold max-w-lg leading-relaxed text-[11px] md:text-sm">
                                                 {selectedTeam.evaluation?.tacticalVerdict || selectedTeam.evaluation?.summary}
                                             </p>
-                                            <p className="text-blue-400/60 font-black text-[8px] md:text-[10px] uppercase tracking-widest mt-4">
+                                            <p className="text-blue-400/60 font-black text-[9px] md:text-[10px] uppercase tracking-widest mt-4">
                                                 {selectedTeam.evaluation?.historicalContext}
                                             </p>
 
                                             {selectedTeam.tieBreakerReason && (
-                                                <div className="mt-4 p-3 bg-blue-500/10 border border-blue-500/30 rounded-xl">
+                                                <div className="mt-4 p-4 bg-blue-500/10 border border-blue-500/20 rounded-2xl">
                                                     <div className="text-[8px] font-black text-blue-400 uppercase tracking-widest mb-1">Tie-Breaker Logic</div>
                                                     <p className="text-[10px] md:text-[11px] font-bold text-blue-200 italic">"{selectedTeam.tieBreakerReason}"</p>
                                                 </div>
                                             )}
                                         </div>
                                         <div className="flex flex-row md:flex-col items-center gap-4 w-full md:w-auto">
-                                            <div className="flex-1 md:flex-none glass-panel p-4 md:p-6 rounded-[20px] md:rounded-[30px] border-white/5 text-center px-6 md:px-10">
-                                                <div className="text-3xl md:text-5xl font-black tracking-tighter" style={{ color: selectedTeam.teamThemeColor }}>{selectedTeam.evaluation?.overallScore}</div>
-                                                <div className="text-[8px] md:text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mt-2">Score</div>
+                                            <div className="flex-1 md:flex-none glass-panel p-4 md:p-6 rounded-3xl border-white/5 text-center px-6 md:px-10 bg-white/5">
+                                                <div className="text-4xl md:text-6xl font-black tracking-tighter" style={{ color: selectedTeam.teamThemeColor }}>{selectedTeam.evaluation?.overallScore}</div>
+                                                <div className="text-[9px] md:text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mt-2">Score</div>
                                             </div>
                                             <button
                                                 onClick={handleShareTeamCard}
                                                 disabled={isSharing}
-                                                className={`btn-premium w-full !py-2 !text-[10px] flex items-center justify-center gap-2 ${isSharing ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                                className={`btn-premium w-full !py-4 md:!py-3 !text-[10px] flex items-center justify-center gap-2 shadow-xl ${isSharing ? 'opacity-50 cursor-not-allowed' : ''}`}
                                             >
                                                 {isSharing ? (
                                                     <span className="animate-spin h-3 w-3 border-2 border-white/30 border-t-white rounded-full"></span>
-                                                ) : '📤'} Share Team Card
+                                                ) : '📤'} Share Squad
                                             </button>
                                         </div>
                                     </div>
@@ -281,15 +340,35 @@ const ResultsReveal = () => {
                                         </div>
 
                                         {selectedTeam.evaluation?.playing11 && (
-                                            <div className="mb-8 p-6 bg-white/5 border border-white/10 rounded-3xl">
-                                                <h4 className="text-[10px] font-black text-blue-400 uppercase tracking-[0.3em] mb-4 text-center">AI Recommended Playing 11</h4>
+                                            <div className="mb-6 p-6 bg-blue-600/5 border border-blue-500/20 rounded-3xl">
+                                                <h4 className="text-[10px] font-black text-blue-400 uppercase tracking-[0.3em] mb-4 text-center">Final Playing 11</h4>
                                                 <div className="flex flex-wrap justify-center gap-2">
                                                     {selectedTeam.evaluation.playing11.map((name, idx) => (
-                                                        <span key={`${name}-${idx}`} className="bg-blue-600/20 text-blue-300 px-3 py-1 rounded-full text-[10px] font-black border border-blue-500/20 uppercase tracking-widest">
+                                                        <span key={`${name}-${idx}`} className="bg-blue-600/10 text-blue-200 px-3 py-1 rounded-full text-[9px] font-black border border-blue-500/10 uppercase tracking-widest">
                                                             {name}
                                                         </span>
                                                     ))}
                                                 </div>
+                                            </div>
+                                        )}
+
+                                        {selectedTeam.evaluation?.impactPlayers && (
+                                            <div className="mb-8 p-6 bg-purple-600/5 border border-purple-500/20 rounded-3xl">
+                                                <h4 className="text-[10px] font-black text-purple-400 uppercase tracking-[0.3em] mb-4 text-center">Strategic Impact Subs</h4>
+                                                <div className="flex flex-wrap justify-center gap-2">
+                                                    {selectedTeam.evaluation.impactPlayers.map((name, idx) => (
+                                                        <span key={`${name}-${idx}`} className="bg-purple-600/10 text-purple-200 px-3 py-1 rounded-full text-[9px] font-black border border-purple-500/10 uppercase tracking-widest">
+                                                            {name}
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {selectedTeam.evaluation?.benchAnalysis && (
+                                            <div className="mb-8 p-6 glass-panel border border-white/5 rounded-3xl">
+                                                <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3">Bench Strength Analysis</h4>
+                                                <p className="text-xs font-bold text-slate-300 leading-relaxed italic">"{selectedTeam.evaluation.benchAnalysis}"</p>
                                             </div>
                                         )}
 

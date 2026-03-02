@@ -1,141 +1,150 @@
+import React from 'react';
 import { ImAirplane } from 'react-icons/im';
-import { getFlagUrl } from '../utils/playerUtils';
 
 const TeamShareCard = ({ team, allPlayersMap }) => {
     if (!team) return null;
 
-    // The user wants the "captain" or star player based on the auction result.
-    // The AI evaluation provides a 'starPlayer' name.
+    // Use the Star Player as the featured "Captain" for the card
     const featuredPlayerName = team.evaluation?.starPlayer;
 
-    // Find the player object for the featured player to get their image
+    // Find the player entry for the featured player
     const featuredPlayerEntry = team.playersAcquired.find(entry => {
-        const name = entry.name || (entry.player && allPlayersMap[entry.player]) || (entry.player?.name);
+        const pData = (entry.player && typeof entry.player === 'string') ? allPlayersMap[entry.player] : entry.player;
+        const name = entry.name || pData?.player || pData?.name || pData?.playerName;
         return name === featuredPlayerName;
     });
 
-    // Fallback to the first player if starPlayer is not found or N/A
+    // Fallback to the first player if starPlayer is not found
     const displayPlayerEntry = featuredPlayerEntry || team.playersAcquired[0];
-    const displayPlayerName = displayPlayerEntry?.name || (displayPlayerEntry?.player && allPlayersMap[displayPlayerEntry.player]) || (displayPlayerEntry?.player?.name) || "Captain";
-    const displayPlayerImage = displayPlayerEntry?.player?.image_path || displayPlayerEntry?.player?.imagepath || displayPlayerEntry?.player?.photoUrl || 'https://via.placeholder.com/400x600?text=Captain';
+    const displayPlayerData = (displayPlayerEntry?.player && typeof displayPlayerEntry.player === 'string') ? allPlayersMap[displayPlayerEntry.player] : (displayPlayerEntry?.player || displayPlayerEntry);
+
+    // Get display name
+    const displayPlayerName = displayPlayerEntry?.name || displayPlayerData?.player || displayPlayerData?.name || "Captain";
+
+    // Get image path from various possible fields
+    const displayPlayerImage = displayPlayerEntry?.image_path || displayPlayerData?.image_path || displayPlayerData?.imagepath || displayPlayerData?.photoUrl || `https://api.dicebear.com/7.x/avataaars/svg?seed=${displayPlayerName}`;
 
     const themeColor = team.teamThemeColor || '#2d3401';
+
+    // Adjust layout based on squad size (limit to 18 for design stability or just show all)
+    const squadSize = team.playersAcquired.length;
+    const itemPadding = squadSize > 20 ? 'px-4 py-2' : (squadSize > 15 ? 'px-6 py-3' : 'px-8 py-5');
+    const textSize = squadSize > 20 ? 'text-lg' : (squadSize > 15 ? 'text-2xl' : 'text-3xl');
+    const iconSize = squadSize > 20 ? 'text-xl' : 'text-3xl';
+    const gridGap = squadSize > 20 ? 'gap-y-3' : 'gap-y-4';
 
     return (
         <div
             id="team-share-card"
-            className="w-[800px] min-h-[600px] text-white relative flex font-sans overflow-hidden p-0 m-0"
+            className="w-[1000px] h-[1000px] text-white relative flex flex-col font-sans overflow-hidden p-0 m-0"
             style={{
                 backgroundColor: themeColor,
-                backgroundImage: `linear-gradient(135deg, ${themeColor} 0%, #000000 100%)`,
-                backgroundSize: 'cover'
+                backgroundImage: `radial-gradient(circle at 20% 20%, rgba(255,255,255,0.15) 0%, transparent 40%), linear-gradient(135deg, ${themeColor} 0%, rgba(0,0,0,0.4) 100%)`,
             }}
         >
-            {/* Left accent bar */}
-            <div className="w-12 bg-white/20 flex flex-col items-center py-8 gap-4 shrink-0 border-r border-white/5">
-                <div className="w-2 h-2 rounded-full bg-white opacity-40"></div>
-                <div className="w-2 h-2 rounded-full bg-white opacity-40"></div>
-                <div className="w-2 h-2 rounded-full bg-white opacity-40"></div>
-                <div className="mt-auto flex flex-col gap-4 mb-4">
-                    <div className="w-0 h-0 border-l-[8px] border-l-transparent border-r-[8px] border-r-transparent border-b-[12px] border-b-white opacity-60"></div>
-                    <div className="w-0 h-0 border-l-[8px] border-l-transparent border-r-[8px] border-r-transparent border-b-[12px] border-b-white opacity-60"></div>
-                    <div className="w-0 h-0 border-l-[8px] border-l-transparent border-r-[8px] border-r-transparent border-b-[12px] border-b-white opacity-60"></div>
+            {/* Decorative Dots Pattern (Top Left) */}
+            <div className="absolute top-10 left-10 flex flex-col gap-4 opacity-30">
+                <div className="flex gap-4">
+                    <div className="w-2.5 h-2.5 rounded-full bg-white"></div>
+                    <div className="w-2.5 h-2.5 rounded-full bg-white"></div>
+                </div>
+                <div className="flex gap-4">
+                    <div className="w-2.5 h-2.5 rounded-full bg-white"></div>
+                    <div className="w-2.5 h-2.5 rounded-full bg-white"></div>
+                </div>
+                <div className="flex gap-4">
+                    <div className="w-2.5 h-2.5 rounded-full bg-white"></div>
+                    <div className="w-2.5 h-2.5 rounded-full bg-white"></div>
                 </div>
             </div>
 
-            {/* Main Content */}
-            <div className="flex-1 p-8 relative flex flex-col">
-                {/* Header Section */}
-                <div className="flex justify-between items-start mb-8">
-                    {/* Featured Player Circle */}
-                    <div className="relative">
-                        <div className="w-48 h-48 rounded-full border-4 border-white overflow-hidden bg-white/20 relative z-10 shadow-2xl">
+            {/* Decorative Triangles (Bottom Left) */}
+            <div className="absolute bottom-10 left-10 flex flex-col gap-6 opacity-40">
+                <div className="w-0 h-0 border-l-[12px] border-l-transparent border-r-[12px] border-r-transparent border-b-[20px] border-b-white"></div>
+                <div className="w-0 h-0 border-l-[12px] border-l-transparent border-r-[12px] border-r-transparent border-b-[20px] border-b-white"></div>
+                <div className="w-0 h-0 border-l-[12px] border-l-transparent border-r-[12px] border-r-transparent border-b-[20px] border-b-white"></div>
+            </div>
+
+            {/* Header Content */}
+            <div className="flex items-start justify-between px-20 pt-16 mb-6">
+                {/* Featured Captain Circle */}
+                <div className="relative group">
+                    <div className="w-64 h-64 rounded-full border-[10px] border-white/90 overflow-hidden bg-white/10 shadow-[0_20px_50px_rgba(0,0,0,0.5)] relative z-10 text-center">
+                        <img
+                            src={displayPlayerImage}
+                            alt={displayPlayerName}
+                            className="w-full h-full object-cover object-top"
+                            crossOrigin="anonymous"
+                            onError={(e) => {
+                                e.target.src = `https://api.dicebear.com/7.x/avataaars/svg?seed=${displayPlayerName}`;
+                            }}
+                        />
+                    </div>
+                    {/* Glow effect behind circle */}
+                    <div className="absolute inset-0 bg-white/20 blur-2xl rounded-full scale-110 -z-10"></div>
+                </div>
+
+                {/* Team Branding */}
+                <div className="text-right flex-1">
+                    {(team.logoUrl || team.franchiseId?.logoUrl) && (
+                        <div className="flex justify-end mb-4">
                             <img
-                                src={displayPlayerImage}
-                                alt={displayPlayerName}
-                                className="w-full h-full object-cover object-top"
+                                src={team.logoUrl || team.franchiseId?.logoUrl}
+                                alt="team logo"
+                                className="h-28 w-auto object-contain brightness-0 invert"
                                 crossOrigin="anonymous"
                             />
                         </div>
-                        {/* Decorative background logo/circle */}
-                        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-64 border-[20px] border-white/5 rounded-full z-0"></div>
-                    </div>
-
-                    {/* Team Names etc */}
-                    <div className="text-right flex-1 pl-8">
-                        {team.franchiseId?.logoUrl && (
-                            <div className="flex justify-end mb-2">
-                                <img
-                                    src={team.franchiseId.logoUrl}
-                                    alt="logo"
-                                    className="h-12 w-auto object-contain brightness-0 invert opacity-60"
-                                    crossOrigin="anonymous"
-                                />
-                            </div>
-                        )}
-                        <h1 className="text-4xl font-black uppercase tracking-tighter leading-none mb-1 text-white drop-shadow-lg">
-                            {team.teamName}
-                        </h1>
-                        <h2 className="text-6xl font-black uppercase tracking-tighter leading-none text-white opacity-90 drop-shadow-2xl">
-                            SQUAD
-                        </h2>
-                        <p className="text-xl font-bold uppercase tracking-[0.2em] mt-2 text-white/80">
-                            FOR IPL 2025
-                        </p>
-                    </div>
+                    )}
+                    <h1 className="text-6xl font-black uppercase tracking-tighter leading-none mb-2 text-white">
+                        {team.teamName}
+                    </h1>
+                    <h2 className="text-[120px] font-black uppercase tracking-tighter leading-[0.85] text-white/90">
+                        SQUAD
+                    </h2>
                 </div>
+            </div>
 
-                {/* Squad Grid */}
-                <div className="grid grid-cols-2 gap-x-8 gap-y-3 flex-1 px-4 z-10">
-                    {team.playersAcquired.map((entry, idx) => {
-                        const playerName = entry.name || (entry.player && allPlayersMap[entry.player]) || (entry.player?.name) || "Unknown Player";
-                        const isOverseas = entry.player?.isOverseas || false;
+            {/* Squad Grid (Two Columns) */}
+            <div className={`grid grid-cols-2 gap-x-12 ${gridGap} px-20 mb-auto z-10 mt-8`}>
+                {team.playersAcquired.map((entry, idx) => {
+                    const pData = (entry.player && typeof entry.player === 'string') ? allPlayersMap[entry.player] : (entry.player || entry);
+                    const playerName = entry.name || pData?.player || pData?.name || "Unknown Player";
 
-                        return (
-                            <div
-                                key={idx}
-                                className="bg-black/50 border border-white/10 rounded-full px-5 py-2 flex items-center justify-between"
-                            >
-                                <div className="flex items-center gap-2 overflow-hidden flex-1 mr-2">
-                                    {getFlagUrl(entry.player?.nationality) && (
-                                        <img
-                                            src={getFlagUrl(entry.player?.nationality)}
-                                            onError={(e) => {
-                                                e.target.style.display = 'none';
-                                            }}
-                                            alt=""
-                                            className="w-5 h-auto rounded-sm shrink-0 border border-white/10"
-                                        />
-                                    )}
-                                    <span className="font-bold text-lg truncate uppercase italic text-white">{playerName}</span>
-                                </div>
-                                {isOverseas && (
-                                    <ImAirplane className="text-white text-xl shrink-0 -rotate-45" />
-                                )}
-                            </div>
-                        );
-                    })}
-                </div>
+                    // Improved overseas logic with fallback to a global map
+                    const nationality = (entry.nationality || pData?.nationality || '').toLowerCase().trim();
+                    const isOverseas = entry.isOverseas || (nationality && !['india', 'indian', 'ind'].includes(nationality));
 
-                {/* Footer deco */}
-                <div className="absolute bottom-4 right-8 opacity-40 text-[10px] font-black tracking-widest uppercase text-white">
+                    return (
+                        <div
+                            key={idx}
+                            className={`bg-black/30 backdrop-blur-md border-[3px] border-white/20 rounded-[40px] ${itemPadding} flex items-center justify-between shadow-lg`}
+                        >
+                            <span className={`font-black ${textSize} uppercase italic tracking-tight text-white truncate pr-4`}>
+                                {playerName}
+                            </span>
+                            {isOverseas && (
+                                <ImAirplane className={`text-white ${iconSize} shrink-0 -rotate-45 opacity-90`} />
+                            )}
+                        </div>
+                    );
+                })}
+            </div>
+
+            {/* Footer */}
+            <div className="w-full px-20 py-8 flex justify-end items-center">
+                <div className="text-sm font-black tracking-[0.3em] uppercase text-white/40 italic">
                     Generated by IPL Auction Verdict
                 </div>
             </div>
 
-            {/* Background "SQUAD" watermark */}
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-[300px] font-black opacity-5 pointer-events-none select-none italic text-white leading-none z-0">
-                SQUAD
+            {/* Huge Watermark Background */}
+            <div className="absolute bottom-40 left-1/2 -translate-x-1/2 text-[350px] font-black opacity-[0.03] pointer-events-none select-none italic text-white leading-none whitespace-nowrap -z-20 uppercase">
+                {team.teamName.split(' ')[0]}
             </div>
-
-            {/* Team Logo Watermark */}
-            {team.franchiseId?.logoUrl && (
-                <div className="absolute top-1/2 left-0 -translate-y-1/2 -translate-x-1/4 w-[400px] h-[400px] opacity-[0.07] pointer-events-none select-none z-0 grayscale brightness-200">
-                    <img src={team.franchiseId.logoUrl} alt="" className="w-full h-full object-contain" crossOrigin="anonymous" />
-                </div>
-            )}
         </div>
     );
 };
 
 export default TeamShareCard;
+

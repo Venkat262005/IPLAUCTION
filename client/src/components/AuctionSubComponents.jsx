@@ -1,6 +1,6 @@
 import React, { memo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ImAirplane } from "react-icons/im";
+import { X } from "lucide-react";
 import { getFlagUrl } from "../utils/playerUtils";
 
 export const TeamList = memo(
@@ -72,15 +72,45 @@ export const TeamList = memo(
             </span>
           </div>
 
-          <div className="flex justify-between items-center text-[10px] text-slate-500 mt-1 z-10 font-bold ml-11">
-            <span className="uppercase tracking-widest">{t.ownerName}</span>
-            <div className="flex items-center gap-2">
-              {t.playersAcquired?.length >= 25 && (
-                <span className="text-red-500 font-black animate-pulse">
-                  SQUAD FULL
-                </span>
+          <div className="flex justify-between items-start text-[10px] text-slate-500 mt-1 z-10 font-bold ml-11">
+            <div className="flex flex-col gap-1.5 min-w-0">
+              <span className="uppercase tracking-widest truncate max-w-[150px] block">{t.ownerName}</span>
+              {/* Composition Stats aligned in a neat row */}
+              {t.playersAcquired?.length > 0 && (
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[9px] text-slate-400">
+                  {(() => {
+                    const counts = t.playersAcquired.reduce((acc, p) => {
+                      const playerRecord = allPlayersMap[p.player] || allPlayersMap[p._id] || {};
+                      const role = (p.role || playerRecord.role || "").toLowerCase();
+
+                      if (role.includes("wk") || role.includes("wicket") || role.includes("keeper")) acc.wk++;
+                      else if (role.includes("all") || role.includes("ar")) acc.ar++;
+                      else if (role.includes("bowl") || role.includes("bw")) acc.bowl++;
+                      else acc.bat++;
+
+                      const nationality = p.nationality || playerRecord.nationality || "";
+                      const isOverseas = p.isOverseas || p.overseas || playerRecord.isOverseas ||
+                        (nationality && !["india", "ind"].includes(nationality.toLowerCase().trim()));
+                      if (isOverseas) acc.fr++;
+
+                      return acc;
+                    }, { bat: 0, bowl: 0, ar: 0, wk: 0, fr: 0 });
+
+                    return (
+                      <>
+                        {counts.bat > 0 && <span className="bg-white/5 px-1.5 py-0.5 rounded text-blue-400">BAT:{counts.bat}</span>}
+                        {counts.bowl > 0 && <span className="bg-white/5 px-1.5 py-0.5 rounded text-red-400">BOWL:{counts.bowl}</span>}
+                        {counts.ar > 0 && <span className="bg-white/5 px-1.5 py-0.5 rounded text-green-400">AR:{counts.ar}</span>}
+                        {counts.wk > 0 && <span className="bg-white/5 px-1.5 py-0.5 rounded text-yellow-400">WK:{counts.wk}</span>}
+                        {counts.fr > 0 && <span className="bg-white/10 px-1.5 py-0.5 rounded text-white shadow-[0_0_5px_rgba(255,255,255,0.1)]">FR:{counts.fr}</span>}
+                      </>
+                    );
+                  })()}
+                </div>
               )}
-              <span className="bg-white/5 px-2 py-0.5 rounded text-white/50">
+            </div>
+            <div className="flex flex-col items-end gap-1.5 shrink-0 ml-2">
+              <span className={`px-2 py-0.5 rounded text-[9px] font-black tracking-widest uppercase ${t.playersAcquired?.length >= 25 ? 'bg-red-500/20 text-red-500 animate-pulse' : 'bg-white/5 text-white/50'}`}>
                 {t.playersAcquired?.length || 0} / 25
               </span>
             </div>
@@ -99,43 +129,53 @@ export const TeamList = memo(
                     Acquired Players
                   </div>
                   {t.playersAcquired.map((p, idx) => {
+                    // Try to recover full player object from allPlayersMap
+                    const playerRecord = allPlayersMap[p.player] || allPlayersMap[p._id] || {};
+
                     let displayName = p.name;
                     if (
                       !displayName ||
                       String(displayName).match(/^[0-9a-fA-F]{24}$/)
                     ) {
                       displayName =
-                        allPlayersMap[p.player] ||
-                        allPlayersMap[p._id] ||
+                        playerRecord.name ||
+                        playerRecord.player ||
                         p.player ||
                         "Unknown";
                     }
+
+                    // Determine role icon - fallback to playerRecord if missing in p
+                    const role = (p.role || playerRecord.role || "").toLowerCase();
+                    let roleIcon = "🏏"; // default bat
+                    if (role.includes("wk") || role.includes("wicket") || role.includes("keeper")) {
+                      roleIcon = "🧤";
+                    } else if (role.includes("all") || role.includes("ar")) {
+                      roleIcon = "🏏⚾";
+                    } else if (role.includes("bowl") || role.includes("bw")) {
+                      roleIcon = "⚾";
+                    }
+
+                    const nationality = p.nationality || playerRecord.nationality || "";
+                    const isOverseas = p.isOverseas || p.overseas || playerRecord.isOverseas ||
+                      (nationality && !["india", "ind"].includes(nationality.toLowerCase().trim()));
+
                     return (
                       <div
                         key={idx}
                         className="flex justify-between items-center text-[10px] font-bold bg-black/20 p-2 rounded border border-white/5"
                       >
-                        <div className="flex items-center gap-1.5 overflow-hidden">
-                          {getFlagUrl(p.player?.nationality || p.nationality) && (
-                            <img
-                              src={getFlagUrl(p.player?.nationality || p.nationality)}
-                              onError={(e) => {
-                                e.target.style.display = 'none';
-                              }}
-                              alt=""
-                              className="w-4 h-auto rounded-sm shrink-0 border border-white/10"
-                            />
+                        <div className="flex items-center gap-1.5 overflow-hidden min-w-0">
+                          {/* Flight symbol for overseas players at the front */}
+                          {isOverseas && (
+                            <span className="shrink-0 text-[11px]" title="Overseas Player">✈️</span>
                           )}
+
                           <span className="truncate">{displayName}</span>
+
+                          {/* Role icon after the name */}
+                          <span className="shrink-0 text-[11px] ml-1" title={role || "Batsman"}>{roleIcon}</span>
                         </div>
-                        {p.isOverseas && (
-                          <ImAirplane
-                            className="text-blue-400 -rotate-45"
-                            size={10}
-                            title="Overseas Player"
-                          />
-                        )}
-                        <span className="text-blue-400 shrink-0">
+                        <span className="text-blue-400 shrink-0 ml-1">
                           ₹{p.boughtFor}L
                         </span>
                       </div>
@@ -245,14 +285,23 @@ export const ChatSection = memo(
     setChatInput,
     handleSendMessage,
     isSpectator,
+    onClose,
   }) => (
-    <div className="flex-1 flex flex-col min-h-0 bg-slate-900/50">
+    <div className="flex-1 flex flex-col min-h-0 bg-slate-900/50 w-full">
       <div className="px-6 py-4 flex items-center justify-between border-b border-white/5 bg-black/20">
         <div>
           <h2 className="text-[10px] font-black text-slate-500 uppercase tracking-[0.3em]">
-            Room Chat
+            War Room Chat
           </h2>
         </div>
+        {onClose && (
+          <button
+            onClick={onClose}
+            className="lg:hidden p-2 rounded-full hover:bg-white/10 text-slate-400 transition-colors"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        )}
       </div>
 
       {/* Chat Messages */}
@@ -272,9 +321,12 @@ export const ChatSection = memo(
                 className={`flex flex-col ${isMe ? "items-end" : "items-start"}`}
               >
                 <div className="flex items-baseline gap-2 mb-1 px-1">
+                  {msg.senderLogo && (
+                    <img src={msg.senderLogo} alt="" className="w-3 h-3 object-contain shrink-0" />
+                  )}
                   <span
                     className="text-[9px] font-black uppercase tracking-widest"
-                    style={{ color: isMe ? "#ffffff" : msg.senderColor }}
+                    style={{ color: msg.senderColor || "#ffffff" }}
                   >
                     {msg.senderName}
                   </span>
@@ -283,8 +335,8 @@ export const ChatSection = memo(
                   </span>
                 </div>
                 <div
-                  className={`max-w-[85%] px-3 py-2 rounded-2xl text-[11px] font-medium leading-relaxed
-                                    ${isMe ? "bg-blue-600 text-white rounded-tr-sm" : "bg-white/10 text-slate-200 rounded-tl-sm border border-white/5"}
+                  className={`max-w-[85%] px-4 py-2.5 rounded-2xl text-[11px] font-medium leading-relaxed shadow-sm
+                                    ${isMe ? "bg-blue-600 text-white rounded-tr-sm shadow-blue-900/20" : "bg-slate-800/80 text-slate-200 rounded-tl-sm border border-white/5"}
                                 `}
                 >
                   {msg.message}

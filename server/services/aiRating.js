@@ -6,51 +6,25 @@ const validateSquad = (team) => {
     const players = team.playersAcquired || [];
     const squadSize = players.length;
 
-    // Minimum 15 players (11 starters + 4 impact)
-    if (squadSize < 15) return { valid: false, reason: `Squad has only ${squadSize} players. Minimum 15 required for evaluation.` };
-    if (squadSize > 25) return { valid: false, reason: `Squad has ${squadSize} players. Maximum 25 allowed.` };
+    // RULE 1: Minimum 17 players
+    if (squadSize < 17) return { valid: false, reason: `Squad has only ${squadSize} players. Minimum 17 required.` };
 
-    let bowlersOrAR = 0;
+    // Check overseas count
     let overseas = 0;
-
     players.forEach(p => {
-        /**
-         * Robust Player Detection:
-         * 1. If p.player is an object (nested populate), use it.
-         * 2. If p is an object with role/nationality (flattened or manual eval), use it.
-         * 3. Ignore if p.player is just a string/ID (missing data).
-         */
         let playerDoc = null;
         if (p.player && typeof p.player === 'object') playerDoc = p.player;
         else if (p.role || p.nationality) playerDoc = p;
 
-        if (!playerDoc) {
-            console.warn(`[AI-VAL] Skipping player with missing data: ${p.id || p._id || 'unknown'}`);
-            return;
-        }
-
-        const role = (playerDoc.role || '').toLowerCase().trim();
-        const nation = (playerDoc.nationality || '').toLowerCase().trim();
-
-        // More flexible role matching for bowlers/all-rounders
-        if (
-            role.includes('bowl') ||
-            role.includes('all') ||
-            role.includes('all-rounder') ||
-            role.includes('spinner') ||
-            role.includes('pacer') ||
-            role.includes('seamer')
-        ) {
-            bowlersOrAR++;
-        }
-
-        // More flexible overseas matching
-        if (nation && !['india', 'indian', 'ind'].includes(nation)) {
-            overseas++;
+        if (playerDoc) {
+            const nation = (playerDoc.nationality || '').toLowerCase().trim();
+            if (nation && !['india', 'indian', 'ind'].includes(nation)) {
+                overseas++;
+            }
         }
     });
 
-    if (bowlersOrAR < 5) return { valid: false, reason: `Squad has only ${bowlersOrAR} Bowler(s)/All-rounder(s) detected. Minimum 5 required.` };
+    // RULE 2: Maximum 8 Foreign Players
     if (overseas > 8) return { valid: false, reason: `Squad has ${overseas} Overseas players. Maximum 8 allowed.` };
 
     return { valid: true };
@@ -65,11 +39,12 @@ const evaluateTeam = async (team) => {
             starPlayer: "N/A", hiddenGem: "N/A", playing11: [], impactPlayers: [],
             tacticalVerdict: `DISQUALIFIED: ${validation.reason}`,
             weakness: validation.reason,
-            historicalContext: "Failed to meet mandatory squad composition requirements."
+            historicalContext: "Failed to meet mandatory squad composition requirements (Min 17 players / Max 8 Overseas)."
         };
     }
 
-    const model = genAI.getGenerativeModel({ model: 'gemini-flash-latest' });
+    const modelName = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+    const model = genAI.getGenerativeModel({ model: modelName });
 
     // --- Auto-select Playing 11 + Impact if user hasn't done so ---
     let playing11 = (team.playing11 && team.playing11.length >= 11) ? team.playing11 : [];
@@ -228,7 +203,8 @@ No other text. Be an expert, be accurate, focus on legacy and impact.
 
 
 const selectPlaying11AndImpact = async (teamName, players) => {
-    const model = genAI.getGenerativeModel({ model: 'gemini-flash-latest' });
+    const modelName = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+    const model = genAI.getGenerativeModel({ model: modelName });
 
     const prompt = `
 You are an elite T20 Franchise Cricket Head Coach. Your team "${teamName}" has drafted ${players.length} players.
@@ -294,6 +270,7 @@ const evaluateAllTeams = async (teamsData) => {
                 };
             }
 
+            // AI-only evaluation (no more hard disqualification for roles/balance)
             let evaluation;
             try {
                 console.log(`--- EVALUATING SQUAD FOR ${team.teamName} ---`);
@@ -310,7 +287,8 @@ const evaluateAllTeams = async (teamsData) => {
 };
 
 const MasterRanker = async (evaluations) => {
-    const model = genAI.getGenerativeModel({ model: 'gemini-flash-latest' });
+    const modelName = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+    const model = genAI.getGenerativeModel({ model: modelName });
 
     const prompt = `
 Final Ranking of IPL Teams.

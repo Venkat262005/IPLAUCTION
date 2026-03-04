@@ -130,9 +130,9 @@ const TeamRow = memo(({
             exit={{ height: 0, opacity: 0 }}
             className="mt-3 border-t border-[#D4AF37]/10 pt-3 flex flex-col gap-1.5 z-10 overflow-hidden"
           >
-            {(!roster || roster.length === 0) ? (
-              <div className="text-[10px] text-[#D4AF37]/50 italic text-center py-2 animate-pulse">Loading roster...</div>
-            ) : roster.map((p, idx) => {
+            {(!roster || roster.length === 0) && (!t.playersAcquired || t.playersAcquired.length === 0) ? (
+              <div className="text-[10px] text-[#D4AF37]/50 italic text-center py-2 animate-pulse">Building squad...</div>
+            ) : (roster && roster.length > 0 ? roster : t.playersAcquired).map((p, idx) => {
               const playerRecord = allPlayersMap[p.player] || allPlayersMap[p._id] || {};
               let displayName = p.name || playerRecord.name || playerRecord.player || p.player || "Unknown";
               const role = (p.role || playerRecord.role || "").toLowerCase();
@@ -259,7 +259,7 @@ export const BidHistory = memo(({ bidHistory }) => (
               {bid.teamLogo ? (
                 <img src={bid.teamLogo} alt="" className="w-full h-full object-contain" />
               ) : (
-                <span className="text-[10px] font-black text-white">{bid.teamName.charAt(0)}</span>
+                <span className="text-[10px] font-black text-white">{(bid.teamName || '?').charAt(0)}</span>
               )}
             </div>
 

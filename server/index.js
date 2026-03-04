@@ -19,14 +19,29 @@ app.use(express.json()); // Body parser
 
 const server = http.createServer(app);
 
-const initHardenedSocket = require('./socket/HardenedSocketServer');
+const setupSocketHandlers = require('./socket/auctionEngine');
 const { startPeriodicFlush } = require('./services/dbWriter');
 
 const apiRoutes = require('./routes/api');
 const sessionRoutes = require('./routes/session');
 
-// Setup Hardened Socket.io
-const io = initHardenedSocket(server);
+// Setup Socket.io
+const io = new Server(server, {
+    cors: {
+        origin: '*',
+        methods: ['GET', 'POST']
+    },
+    // Force WebSocket — eliminates HTTP polling handshake overhead (~300ms saved per connection)
+    transports: ['websocket'],
+    // Compress large payloads (new_player with stats, lobby updates)
+    perMessageDeflate: {
+        threshold: 1024 // Only compress messages > 1KB
+    },
+    // 100KB max message size (players are large objects)
+    maxHttpBufferSize: 1e5
+});
+
+setupSocketHandlers(io);
 
 app.use('/api', apiRoutes);
 app.use('/api/session', sessionRoutes);
@@ -62,6 +77,8 @@ const PORT = process.env.PORT || 5000;
 PlayerCache.load().then(() => {
     server.listen(PORT, () => {
         console.log(`[SUCCESS] Server running on port ${PORT}`);
+        // Start batched DB write flush (writes dirty rooms every 30s instead of per-bid)
+        startPeriodicFlush(30000);
     });
 });
 

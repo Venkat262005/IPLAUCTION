@@ -9,121 +9,35 @@ const { markDirty, flushRoom } = require('../services/dbWriter');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'ipl_auction_fallback_secret';
 
+const { normalizePlayer } = require('../utils/playerNormalizer');
+
 async function fetchAllPlayers() {
     const collections = [
-        'marquee_batsmen',
-        'marquee_bowlers',
-        'marquee_Allrounder',
-        'marquee_wk',
-        'pool1_batsmen',
-        'pool1_bowlers',
-        'pool1_Allrounder',
-        'pool1_wk',
-        'Emerging_players',
-        'pool2_batsmen',
-        'pool2_bowlers',
-        'pool2_allrounder',
-        'pool3_batsmen',
-        'pool4_batsmen',
-        'pool4_allrounder',
-        'pool4_wk'
+        'marquee_batsmen', 'marquee_bowlers', 'marquee_Allrounder', 'marquee_wk',
+        'pool1_batsmen', 'pool1_bowlers', 'pool1_Allrounder', 'pool1_wk',
+        'Emerging_players', 'pool2_batsmen', 'pool2_bowlers', 'pool2_allrounder',
+        'pool3_batsmen', 'pool4_batsmen', 'pool4_allrounder', 'pool4_wk'
     ];
 
     try {
         console.time("[DATA] Multi-fetch duration");
+        const db = mongoose.connection.client.db('ipl_data');
 
-        // Fetch all collections in parallel for speed
         const poolResults = await Promise.all(
             collections.map(async (collName) => {
-                // All new auction pools live in the 'ipl_data' database
-                const db = mongoose.connection.client.db('ipl_data');
                 const players = await db.collection(collName).find({}).toArray();
 
-                // Shuffle players within this specific collection (Fisher-Yates)
+                // Shuffle players (Fisher-Yates)
                 for (let i = players.length - 1; i > 0; i--) {
                     const j = Math.floor(Math.random() * (i + 1));
                     [players[i], players[j]] = [players[j], players[i]];
                 }
 
-                // Determine basePrice (in lakhs)
-                let bp = 50;
-                const lowerColl = collName.toLowerCase();
-                if (lowerColl.startsWith('marquee')) bp = 200; // 2cr
-                else if (lowerColl.includes('pool1')) bp = 150; // 1.5cr
-                else if (lowerColl.includes('emerging')) bp = 30; // 30L
-                else if (lowerColl.includes('pool2')) bp = 100; // 1cr
-                else if (lowerColl.includes('pool3')) bp = 75; // 75L
-                else if (lowerColl.includes('pool4')) bp = 50; // 50L
-
-                // Format and map MongoDB stats to camelCase UI fields
-                return players.map(p => {
-                    // ---- emerging_players has a unique field schema ----
-                    if (collName === 'emerging_players') {
-                        const country = (p.Country || '').toLowerCase().trim();
-                        const isOverseas = country !== '' && country !== 'india' && country !== 'ind';
-                        return {
-                            ...p,
-                            name: p.Player || p.name || 'Unknown Player',
-                            role: p.Role || p.role || 'Batsman',
-                            nationality: p.Country || p.nationality || '',
-                            isOverseas,
-                            poolName: 'EMERGING PLAYERS',
-                            poolID: collName,
-                            basePrice: bp,
-                            imagepath: p['Image URL'] || p.imagepath || p.image_path || '',
-                            image: p['Image URL'] || p.image_path || p.image || '/default-player.png',
-                            stats: {
-                                battingAvg: parseFloat(p['Batting Avg']) || p.battingAvg || 0,
-                                strikeRate: parseFloat(p['Strike Rate']) || p.strikeRate || 0,
-                                highestScore: parseFloat(p['Highest Runs']) || p.highestScore || 0,
-                                bowlingAvg: parseFloat(p['Bowling Avg']) || p.bowlingAvg || 0,
-                                economy: parseFloat(p['Economy']) || p.economy || 0,
-                                bestFigures: p['Best Figures'] || p.bestFigures || '0/0',
-                                matches: p.Matches || p.matches || 0,
-                                runs: p.Runs || p.runs || 0,
-                                wickets: p.Wickets || p.wickets || 0,
-                                catches: p.catches || 0,
-                                stumpings: p.stumpings || 0
-                            }
-                        };
-                    }
-
-                    // ---- Standard schema for all other pools ----
-                    const nationality = p.nationality || '';
-                    const isOverseas = p.isOverseas !== undefined ? p.isOverseas :
-                        (nationality && !['india', 'ind'].includes(nationality.toLowerCase().trim()));
-
-                    return {
-                        ...p,
-                        name: p.name || p.player || 'Unknown Player',
-                        isOverseas,
-                        poolName: collName.replace(/_/g, ' ').toUpperCase(),
-                        poolID: collName,
-                        basePrice: bp,
-                        image: p.image_path || p.image || '/default-player.png',
-                        // Nest stats for UI compatibility
-                        stats: {
-                            battingAvg: p.batting_avg || p.battingAvg || 0,
-                            strikeRate: p.batting_strike_rate || p.strikeRate || 0,
-                            highestScore: p.highest_score || p.highestScore || 0,
-                            bowlingAvg: p.bowling_avg || p.bowlingAvg || 0,
-                            economy: p.bowling_economy || p.economy || 0,
-                            bestFigures: p.best_bowling_figures || p.bestFigures || '0/0',
-                            matches: p.matches || 0,
-                            runs: p.runs || 0,
-                            wickets: p.wickets || 0,
-                            catches: p.catches || 0,
-                            stumpings: p.stumpings || 0
-                        }
-                    };
-                });
+                return players.map(p => normalizePlayer(p, collName));
             })
         );
 
-
         console.timeEnd("[DATA] Multi-fetch duration");
-
-        // Flatten into final auction order
         return poolResults.flat();
     } catch (err) {
         console.error("[DATA] Multi-collection fetch error:", err.message);
@@ -201,7 +115,6 @@ function lightweightTeams(teams = []) {
 
         return {
             ...t,
-            playersAcquired: undefined, // Strip the heavy array
             acquiredCount: t.playersAcquired?.length || 0,
             roleCounts: counts
         };
@@ -504,7 +417,7 @@ const setupSocketHandlers = (io) => {
                 const isActivePhase = state.status === 'Lobby' || state.status === 'Auctioning' || state.status === 'Paused';
                 const stateSummary = {
                     ...state,
-                    players: [], // Don't send 100+ player objects
+                    players: state.players.map(p => ({ _id: p._id, name: p.name, player: p.player, poolName: p.poolName, basePrice: p.basePrice, imagepath: p.imagepath, image_path: p.image_path, photoUrl: p.photoUrl })),
                     teams: isActivePhase ? lightweightTeams(state.teams) : state.teams,
                     activePlayer: (state.status === 'Auctioning' || state.status === 'Paused') ? state.players[state.currentIndex] : null,
                     activeBid: state.currentBid,
@@ -640,7 +553,7 @@ const setupSocketHandlers = (io) => {
         socket.on('start_auction', ({ roomCode }) => {
             const state = roomStates[roomCode];
             if (!state) return;
-            if (state.host !== socket.id) return socket.emit('error', 'Only host can start');
+            if (!isModerator(state, socket.id, socket.userId)) return socket.emit('error', 'Only host or co-host can start');
 
             // Prevent starting auction when nobody has claimed a franchise
             if (!state.teams || state.teams.length === 0) {
@@ -659,7 +572,7 @@ const setupSocketHandlers = (io) => {
             }
 
             // Load first player after a slight delay
-            setTimeout(() => loadNextPlayer(roomCode, io), 2000);
+            setTimeout(() => loadNextPlayer(roomCode, io), 800);
         });
 
         // Place Bid
@@ -1446,7 +1359,7 @@ function loadNextPlayer(roomCode, io) {
 
     io.to(roomCode).emit('new_player', {
         player,
-        nextPlayers: nextPlayers.slice(0, 10), // Limit payload size to next 10 players
+        nextPlayers, // Full catalog for carousel and pools view
         timer: state.timer,
         skippedHistory: state.skippedHistory || []
     });

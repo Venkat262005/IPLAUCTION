@@ -31,7 +31,7 @@ const GlobalResultCard = ({ results, allPlayersMap }) => {
                             <div className="relative mb-3 flex flex-col items-center">
                                 <div className="w-20 h-20 rounded-full bg-white flex items-center justify-center p-2 shadow-[0_0_20px_rgba(255,255,255,0.2)]">
                                     <img
-                                        src={team.logoUrl || team.franchiseId?.logoUrl}
+                                        src={team.logoUrl || team.franchiseId?.logoUrl || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(team.teamName)}`}
                                         alt={team.teamName}
                                         className="w-full h-full object-contain"
                                     />

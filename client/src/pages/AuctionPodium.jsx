@@ -189,6 +189,13 @@ const AuctionPodium = () => {
         x.set(0);
         y.set(0);
     };
+
+    // Lazy roster loader
+    useEffect(() => {
+        if (expandedTeamId && !teamRosters[expandedTeamId]) {
+            socket.emit("request_team_roster", { teamId: expandedTeamId });
+        }
+    }, [expandedTeamId, roomCode, teamRosters, socket]);
     useEffect(() => {
         if (!socket || !roomCode || !isSessionReady) return;
         setIsSocketReady(true);
@@ -196,8 +203,6 @@ const AuctionPodium = () => {
         // --- Event Handlers ---
 
         const handleRoomJoined = ({ state }) => {
-            console.log("Joined Room:", roomCode, "Status:", state.status);
-
             // Re-route if auction is already beyond podium phase
             if (state.status === "Selection") {
                 return navigate(`/selection/${roomCode}`);
@@ -226,15 +231,19 @@ const AuctionPodium = () => {
 
             if (state.coHostUserIds) setCoHostUserIds(state.coHostUserIds);
 
-            // Request own team roster immediately for War Room view
+            // Set full catalog and upcoming players from join data
+            if (state.players && state.players.length > 0) {
+                // If auction is live, slice from current index
+                const startIdx = state.currentIndex || 0;
+                setUpcomingPlayers(state.players.slice(startIdx + 1));
+            }
+
+            // Request own team roster immediately for War Room view (redundant but safe)
             if (myTeamInState) {
-                console.log("[LAZY] Requesting own team roster on join");
                 socket.emit("request_team_roster", { teamId: myTeamInState.id || myTeamInState.franchiseId });
             }
 
-            // High-reliability restoration: check for activePlayer directly in join payload
             if (state.activePlayer) {
-                console.log("Restoring active player from join payload:", state.activePlayer.name);
                 setCurrentPlayer(state.activePlayer);
                 currentPlayerRef.current = state.activePlayer;
                 if (state.activeBid) setCurrentBid(state.activeBid);
@@ -295,13 +304,7 @@ const AuctionPodium = () => {
             });
         };
 
-        // Lazy roster loader
-        useEffect(() => {
-            if (expandedTeamId && !teamRosters[expandedTeamId]) {
-                console.log("[LAZY] Requesting roster for expanded team:", expandedTeamId);
-                socket.emit("request_team_roster", { teamId: expandedTeamId });
-            }
-        }, [expandedTeamId, roomCode, teamRosters]);
+
 
         const handleVoteSubmit = (playerIds) => {
             if (!socket || !roomCode || !votingSession) return;
@@ -863,7 +866,7 @@ const AuctionPodium = () => {
                                     {/* Top Buys */}
                                     {activeTeams
                                         .flatMap((t) =>
-                                            t.playersAcquired.map((p) => ({
+                                            (t.playersAcquired || []).map((p) => ({
                                                 ...p,
                                                 team: t.teamName,
                                                 teamLogo: t.teamLogo,
@@ -1072,12 +1075,12 @@ const AuctionPodium = () => {
                                                     currentPlayer.photoUrl;
                                                 // Minimal validation for data URLs
                                                 if (url && url.startsWith('data:') && !url.includes('base64,')) {
-                                                    return "https://via.placeholder.com/400x600?text=Invalid+Image";
+                                                    return `https://api.dicebear.com/7.x/initials/svg?seed=Invalid+Image`;
                                                 }
-                                                return url || "https://via.placeholder.com/400x600?text=No+Photo";
+                                                return url || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(currentPlayer?.player || currentPlayer?.name || "Player")}&backgroundColor=030712`;
                                             })()}
                                             onError={(e) => {
-                                                e.target.src = "https://via.placeholder.com/400x600?text=Image+Load+Error";
+                                                e.target.src = `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(currentPlayer?.player || currentPlayer?.name || "Player")}&backgroundColor=030712`;
                                             }}
                                             alt={
                                                 currentPlayer.player || currentPlayer.name || "Player"
@@ -1525,7 +1528,7 @@ const AuctionPodium = () => {
                         chatInput={chatInput}
                         setChatInput={setChatInput}
                         handleSendMessage={handleSendMessage}
-                        isSpectator={!myTeam && !gameState?.host === socket.id}
+                        isSpectator={!myTeam && gameState?.host !== socket.id}
                         onClose={() => setActiveTab('podium')}
                     />
                 </div>
@@ -2348,8 +2351,8 @@ const AuctionPodium = () => {
                                             <h4 className="text-[10px] font-black text-[#FFE58F] uppercase tracking-[0.3em]">Completed Auctions</h4>
                                         </div>
                                         <div className="grid grid-cols-1 gap-2">
-                                            {activeTeams.flatMap(t => t.playersAcquired.map(p => ({ ...p, teamBought: t.teamName, teamColor: t.themeColor, teamLogo: t.teamLogo }))).length > 0 ? (
-                                                activeTeams.flatMap(t => t.playersAcquired.map(p => ({ ...p, teamBought: t.teamName, teamColor: t.themeColor, teamLogo: t.teamLogo })))
+                                            {activeTeams.flatMap(t => (t.playersAcquired || []).map(p => ({ ...p, teamBought: t.teamName, teamColor: t.themeColor, teamLogo: t.teamLogo }))).length > 0 ? (
+                                                activeTeams.flatMap(t => (t.playersAcquired || []).map(p => ({ ...p, teamBought: t.teamName, teamColor: t.themeColor, teamLogo: t.teamLogo })))
                                                     .sort((a, b) => b.boughtFor - a.boughtFor) // Show highest buys first
                                                     .map((p, idx) => {
                                                         const playerRecord = allPlayersMap[p.player] || allPlayersMap[p._id] || {};

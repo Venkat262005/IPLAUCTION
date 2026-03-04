@@ -12,6 +12,8 @@ const COLLECTIONS = [
     'pool3_batsmen', 'pool4_batsmen', 'pool4_allrounder', 'pool4_wk'
 ];
 
+const { normalizePlayer } = require('./playerNormalizer');
+
 class PlayerCache {
     constructor() {
         this.playersMap = new Map(); // id -> player object
@@ -31,17 +33,14 @@ class PlayerCache {
             this.pools[collName] = [];
 
             rawPlayers.forEach(p => {
-                const id = String(p._id);
-                const player = {
-                    ...p,
-                    _id: id,
-                    poolID: collName
-                };
+                const player = normalizePlayer(p, collName);
+                const id = player._id;
+
                 this.playersMap.set(id, player);
                 this.pools[collName].push(id);
 
-                if (p.basePrice < this.lowestBasePrice) {
-                    this.lowestBasePrice = p.basePrice;
+                if (player.basePrice < this.lowestBasePrice) {
+                    this.lowestBasePrice = player.basePrice;
                 }
             });
         });

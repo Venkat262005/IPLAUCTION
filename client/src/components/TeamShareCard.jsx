@@ -8,14 +8,14 @@ const TeamShareCard = ({ team, allPlayersMap }) => {
     const featuredPlayerName = team.evaluation?.starPlayer;
 
     // Find the player entry for the featured player
-    const featuredPlayerEntry = team.playersAcquired.find(entry => {
+    const featuredPlayerEntry = (team.playersAcquired || []).find(entry => {
         const pData = (entry.player && typeof entry.player === 'string') ? allPlayersMap[entry.player] : entry.player;
         const name = entry.name || pData?.player || pData?.name || pData?.playerName;
         return name === featuredPlayerName;
     });
 
     // Fallback to the first player if starPlayer is not found
-    const displayPlayerEntry = featuredPlayerEntry || team.playersAcquired[0];
+    const displayPlayerEntry = featuredPlayerEntry || (team.playersAcquired || [])[0];
     const displayPlayerData = (displayPlayerEntry?.player && typeof displayPlayerEntry.player === 'string') ? allPlayersMap[displayPlayerEntry.player] : (displayPlayerEntry?.player || displayPlayerEntry);
 
     // Get display name
@@ -26,17 +26,20 @@ const TeamShareCard = ({ team, allPlayersMap }) => {
 
     const themeColor = team.teamThemeColor || '#2d3401';
 
-    // Adjust layout based on squad size (limit to 18 for design stability or just show all)
-    const squadSize = team.playersAcquired.length;
-    const itemPadding = squadSize > 20 ? 'px-4 py-2' : (squadSize > 15 ? 'px-6 py-3' : 'px-8 py-5');
-    const textSize = squadSize > 20 ? 'text-lg' : (squadSize > 15 ? 'text-2xl' : 'text-3xl');
-    const iconSize = squadSize > 20 ? 'text-xl' : 'text-3xl';
-    const gridGap = squadSize > 20 ? 'gap-y-3' : 'gap-y-4';
+    // Adjust layout based on squad size
+    const squadSize = (team.playersAcquired || []).length;
+    const itemPadding = squadSize > 22 ? 'px-2 py-1' : (squadSize > 18 ? 'px-3 py-2' : (squadSize > 12 ? 'px-4 py-2.5' : 'px-8 py-5'));
+    const textSize = squadSize > 22 ? 'text-xs' : (squadSize > 18 ? 'text-sm' : (squadSize > 12 ? 'text-xl' : 'text-3xl'));
+    const iconSize = squadSize > 22 ? 'text-sm' : (squadSize > 18 ? 'text-base' : (squadSize > 12 ? 'text-lg' : 'text-3xl'));
+    const gridGap = squadSize > 22 ? 'gap-y-1.5' : (squadSize > 18 ? 'gap-y-2' : 'gap-y-4');
+    const gridCols = squadSize > 18 ? 'grid-cols-3' : 'grid-cols-2';
+    const gridGapX = squadSize > 18 ? 'gap-x-4' : 'gap-x-12';
+    const horizontalPadding = squadSize > 18 ? 'px-8' : 'px-20';
 
     return (
         <div
             id="team-share-card"
-            className="w-[1000px] h-[1000px] text-white relative flex flex-col font-sans overflow-hidden p-0 m-0"
+            className="w-[1000px] min-h-[1000px] h-fit text-white relative flex flex-col font-sans p-0 m-0 pb-20"
             style={{
                 backgroundColor: themeColor,
                 backgroundImage: `radial-gradient(circle at 20% 20%, rgba(255,255,255,0.15) 0%, transparent 40%), linear-gradient(135deg, ${themeColor} 0%, rgba(0,0,0,0.4) 100%)`,
@@ -105,9 +108,9 @@ const TeamShareCard = ({ team, allPlayersMap }) => {
                 </div>
             </div>
 
-            {/* Squad Grid (Two Columns) */}
-            <div className={`grid grid-cols-2 gap-x-12 ${gridGap} px-20 mb-auto z-10 mt-8`}>
-                {team.playersAcquired.map((entry, idx) => {
+            {/* Squad Grid (Dynamic Columns) */}
+            <div className={`grid ${gridCols} ${gridGapX} ${gridGap} ${horizontalPadding} mb-auto z-10 mt-8`}>
+                {(team.playersAcquired || []).map((entry, idx) => {
                     const pData = (entry.player && typeof entry.player === 'string') ? allPlayersMap[entry.player] : (entry.player || entry);
                     const playerName = entry.name || pData?.player || pData?.name || "Unknown Player";
 

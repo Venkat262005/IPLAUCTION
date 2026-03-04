@@ -232,6 +232,17 @@ const Lobby = () => {
     };
   }, [socket, navigate]);
 
+  // Ensure socket reconnects properly attach back to the room if disconnected while in Lobby
+  useEffect(() => {
+    if (!socket || !roomState?.roomCode) return;
+    const onReconnect = () => {
+      console.log("[Lobby] Socket reconnected. Re-joining room:", roomState.roomCode);
+      socket.emit("join_room", { roomCode: roomState.roomCode, asSpectator: isSpectatorMode });
+    };
+    socket.on("connect", onReconnect);
+    return () => socket.off("connect", onReconnect);
+  }, [socket, roomState?.roomCode, isSpectatorMode]);
+
   // Reconnection logic is now handled directly by reconnectWithToken
 
   const handleCreate = async () => {
@@ -833,7 +844,7 @@ const Lobby = () => {
                           ) : (
                             <div className="w-8 h-8 rounded-full bg-[#0a0702] flex items-center justify-center shrink-0 border border-[#D4AF37]/20">
                               <span className="text-[10px] font-black text-[#FFE58F]">
-                                {t.teamName.charAt(0)}
+                                {(t.teamName || '?').charAt(0)}
                               </span>
                             </div>
                           )}

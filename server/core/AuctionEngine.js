@@ -80,13 +80,13 @@ class AuctionEngine {
             io.to(roomCode).emit('unsold', { pid: player._id });
         }
 
-        // Critical DB Write (Atomic Player Handover)
-        await AuctionRoom.findOneAndUpdate({ roomId: roomCode }, {
+        // Critical DB Write (Atomic Player Handover) - NON-BLOCKING for speed
+        AuctionRoom.findOneAndUpdate({ roomId: roomCode }, {
             $inc: { currentPlayerIndex: 1 }
-        });
+        }).catch(err => console.error("[Engine] DB Update Error:", err));
 
         state.currentIndex++;
-        setTimeout(() => this.loadNextPlayer(roomCode, io), 2000);
+        setTimeout(() => this.loadNextPlayer(roomCode, io), 800);
     }
 
     loadNextPlayer(roomCode, io) {

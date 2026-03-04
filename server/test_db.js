@@ -1,15 +1,12 @@
-require('dotenv').config();
 const mongoose = require('mongoose');
+const Franchise = require('./models/Franchise.js');
+require('dotenv').config();
 
-mongoose.connect(process.env.MONGO_URI)
+mongoose.connect(process.env.MONGODB_URI)
   .then(async () => {
-    console.log('Connected');
-    const db = mongoose.connection.db;
-    const player = await db.collection('new_enhanced').findOne({});
-    console.log(JSON.stringify(player, null, 2));
+    const teams = await Franchise.find().lean();
+    console.log("DB Teams:");
+    console.dir(teams);
     process.exit(0);
   })
-  .catch(err => {
-    console.error(err);
-    process.exit(1);
-  });
+  .catch(console.error);

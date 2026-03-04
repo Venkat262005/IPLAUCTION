@@ -437,7 +437,7 @@ const ResultsReveal = () => {
 
                                         <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-4">Full Squad</h3>
                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                            {selectedTeam.playersAcquired.map((entry, idx) => (
+                                            {(selectedTeam.playersAcquired || []).map((entry, idx) => (
                                                 <div key={entry.player?._id || entry.player || idx} className="glass-panel p-3 rounded-2xl border-white/5 flex items-center justify-between">
                                                     <div className="flex items-center gap-3">
                                                         <div className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center font-black text-[10px] text-slate-500">

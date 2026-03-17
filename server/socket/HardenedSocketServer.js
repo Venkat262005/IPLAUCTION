@@ -15,9 +15,11 @@ const JWT_SECRET = process.env.JWT_SECRET || 'ipl_auction_fallback_secret';
 const initHardenedSocket = (server) => {
     const io = new Server(server, {
         cors: { origin: '*', methods: ['GET', 'POST'] },
-        transports: ['websocket'],
+        // Allow polling + websocket: polling is required for Vite dev proxy HTTP → WS upgrade
+        transports: ['polling', 'websocket'],
         perMessageDeflate: { threshold: 1024 },
-        maxHttpBufferSize: 1e5
+        maxHttpBufferSize: 1e5,
+        allowEIO3: true
     });
 
     // 1. Handshake Security (JWT)

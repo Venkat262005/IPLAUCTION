@@ -28,119 +28,87 @@ const validateSquad = (team) => {
 };
 
 const evaluateTeam = async (team) => {
-
     const validation = validateSquad(team);
+    let validationWarning = null;
+    
     if (!validation.valid) {
-        console.log(`--- Evaluation Disqualified for ${team.teamName}: ${validation.reason} ---`);
-        return {
-            battingScore: 0, bowlingScore: 0, balanceScore: 0, impactScore: 0, overallScore: 0,
-            starPlayer: "N/A", hiddenGem: "N/A", playing11: [], impactPlayers: [],
-            tacticalVerdict: `DISQUALIFIED: ${validation.reason}`,
-            weakness: validation.reason,
-            historicalContext: "Failed to meet mandatory squad composition requirements."
-        };
+        console.log(`--- [AI-VALIDATION] Squad for ${team.teamName} is technically disqualified: ${validation.reason} ---`);
+        validationWarning = validation.reason;
+        // We will proceed with evaluation but with a heavy penalty flag
     }
 
     const modelName = process.env.GEMINI_MODEL || 'gemini-flash-latest';
     const model = genAI.getGenerativeModel({ model: modelName });
 
-    let playing11 = (team.playing11 && team.playing11.length >= 11) ? team.playing11 : [];
-    let impactPlayers = (team.impactPlayers && team.impactPlayers.length >= 4) ? team.impactPlayers : [];
-
-    if (playing11.length < 11 || impactPlayers.length < 4) {
-        console.log(`--- Auto-selecting Playing 11 for ${team.teamName} ---`);
-        try {
-            const autoSelection = await selectPlaying11AndImpact(team.teamName, team.playersAcquired);
-            playing11 = autoSelection.playing11 || [];
-            impactPlayers = autoSelection.impactPlayers || [];
-        } catch (selErr) {
-            console.error('Auto-selection failed:', selErr.message);
-            const ids = team.playersAcquired.map(p => String(p.id || p._id));
-            playing11 = ids.slice(0, 11);
-            impactPlayers = ids.slice(11, 15);
-        }
+    // We always calculate the "Ideal" AI recommendation for display in the Team Profile
+    console.log(`--- [AI] Generating Strategic Recommendation for ${team.teamName} ---`);
+    let aiRecommendation = { homePlaying11: [], awayPlaying11: [], impactPlayers: [] };
+    try {
+        aiRecommendation = await selectPlaying11AndImpact(team.teamName, team.playersAcquired);
+    } catch (selErr) {
+        console.error('AI recommendation failed:', selErr.message);
+        const ids = team.playersAcquired.map(p => String(p.id || p._id));
+        aiRecommendation.homePlaying11 = ids.slice(0, 11);
+        aiRecommendation.awayPlaying11 = ids.slice(0, 11);
+        aiRecommendation.impactPlayers = ids.slice(11, 15);
     }
 
+    // Lineups for the evaluation: We prioritize the USER'S selection for the Verdict/Rating
+    const userXI = team.playing11 || [];
+    const userImpact = team.impactPlayers || [];
+
+    // AI's recommendation for the Team Profile display
+    const homePlaying11 = aiRecommendation.homePlaying11;
+    const awayPlaying11 = aiRecommendation.awayPlaying11;
+    const recImpact = aiRecommendation.impactPlayers;
+
     const bench = team.playersAcquired.filter(
-        p => !playing11.concat(impactPlayers).includes(String(p.id || p._id))
+        p => !userXI.concat(userImpact).includes(String(p.id || p._id))
     );
 
     const prompt = `
 You are an IPL Historian, Auction Analyst, and T20 Strategy Expert.
 
-Evaluate the drafted squad based on their HISTORICAL IPL IMPACT, peak performance level, and tactical squad construction.
+Evaluate the drafted squad. The user has locked in their Starting XI and Impact Subs (USER'S SELECTION). Your job is to judge their choices while also providing your own recommendations.
 
-IMPORTANT RULES
+${validationWarning ? `WARNING: This squad is technically DISQUALIFIED because: ${validationWarning}. Please take this into account and provide a significantly lower score.` : ''}
 
-1. Ignore current age or fitness. Treat every player as their IPL PRIME version.
-
-2. Focus on:
-- Historical match-winning ability
-- Consistency across IPL seasons
-- Pressure performances
-- Powerplay / Middle / Death contributions
-- IPL legacy
-
-3. Emerging Player Rule
-For players with limited IPL history evaluate ONLY:
-- Strike Rate
-- Batting Average
-
-4. Batting Evaluation
-Analyze:
-- Opening strength
-- Middle order
-- Finishers
-- Left-right combinations
-- Powerplay scoring
-
-5. Bowling Evaluation
-Analyze:
-- Pace vs spin balance
-- Left arm vs right arm bowlers
-- Death bowlers
-- Powerplay wicket takers
-
-6. Role Balance
-Check if team has:
-- Openers
-- Anchor
-- Finisher
-- Wicketkeeper
-- 5 bowling options
-
-7. Like-for-like backups
-Check if bench provides replacements.
-
-8. Home ground suitability
-Analyze whether squad suits IPL home conditions.
-
-9. Auction Strategy Review
-If the team overspent on similar players or ignored key roles, roast the strategy like a cricket analyst.
-
-TEAM DETAILS
-
-Team Name: ${team.teamName}
-Budget Remaining: ₹${team.currentPurse || team.budgetRemaining}L
-
-PLAYING 11
-${playing11.map(id => {
-        const p = team.playersAcquired.find(pa => pa.id === id);
-        if (!p) return `Unknown Player`;
+USER'S SELECTED STARTING XI:
+${userXI.map(id => {
+        const p = team.playersAcquired.find(pa => String(pa.id || pa._id) === id);
+        if (!p) return `Unknown Player (ID:${id})`;
         const s = p.stats || {};
         return `${p.name} (${p.role}) | SR ${s.strikeRate} Avg ${s.average} Wkts ${s.wickets} Econ ${s.economy}`;
     }).join('\n')}
 
-IMPACT PLAYERS
-${impactPlayers.map(id => {
-        const p = team.playersAcquired.find(pa => pa.id === id);
-        if (!p) return `Unknown Player`;
+USER'S SELECTED IMPACT SUBS:
+${userImpact.map(id => {
+        const p = team.playersAcquired.find(pa => String(pa.id || pa._id) === id);
+        if (!p) return `Unknown Player (ID:${id})`;
         const s = p.stats || {};
         return `${p.name} (${p.role}) | SR ${s.strikeRate} Econ ${s.economy}`;
     }).join('\n')}
 
-BENCH
+SQUAD DEPTH (BENCH):
 ${bench.map(p => `${p.name} (${p.role}) | SR ${p.stats?.strikeRate || 0} Econ ${p.stats?.economy || 0}`).join('\n')}
+
+AI COACH'S RECOMMENDED HOME XI:
+${homePlaying11.map(id => team.playersAcquired.find(pa => String(pa.id || pa._id) === id)?.name || id).join(', ')}
+
+AI COACH'S RECOMMENDED AWAY XI:
+${awayPlaying11.map(id => team.playersAcquired.find(pa => String(pa.id || pa._id) === id)?.name || id).join(', ')}
+
+STRATEGIC ANALYSIS DATA:
+For evaluation, treat every player as their IPL PRIME version.
+
+EVALUATION CRITERIA:
+1. Rate the USER'S SELECTED STARTING XI (11 players) and IMPACT SUBS (4 players) strictly.
+2. Check for Role Balance in the USER'S SELECTION:
+   - Does it have a specialist Wicketkeeper? (Note: MS Dhoni, Sanju Samson, Rishabh Pant, etc. are keepers even if listed as Batsmen-Keeper).
+   - Are there 5+ bowling options?
+   - Is there a proper balance of Anchor vs Aggressor?
+3. Judge the Auction Strategy: Did they buy too many similar legends without a plan?
+4. Use the SQUAD DEPTH to suggest if better players were left on the bench.
 
 Respond ONLY with JSON:
 
@@ -152,11 +120,13 @@ Respond ONLY with JSON:
   "overallScore": 1-100,
   "starPlayer": "Name",
   "hiddenGem": "Name",
-  "playing11": ["Name"],
-  "impactPlayers": ["Name"],
-  "tacticalVerdict": "Detailed analysis",
-  "weakness": "Biggest structural weakness",
-  "benchAnalysis": "Bench analysis",
+  "homePlaying11": ["Name"],
+  "awayPlaying11": ["Name"],
+  "homeImpactPlayers": ["Name"],
+  "awayImpactPlayers": ["Name"],
+  "tacticalVerdict": "Detailed analysis of the USER'S SELECTION",
+  "weakness": "Biggest structural weakness in the USER'S SELECTION",
+  "benchAnalysis": "How the bench could improve the starting XI",
   "historicalContext": "Comparison to famous IPL team"
 }
 
@@ -171,29 +141,46 @@ Return ONLY JSON.
         });
 
         const cleanedText = text.replace(/```json/g, '').replace(/```/g, '').trim();
-        return JSON.parse(cleanedText);
+        const result = JSON.parse(cleanedText);
+        if (validationWarning) {
+            result.tacticalVerdict = `[RULES VIOLATION] ${validationWarning}. ${result.tacticalVerdict}`;
+        }
+        return result;
 
     } catch (err) {
         console.error(`AI evaluation failed for ${team.teamName}`, err);
         return {
-            overallScore: 50,
-            tacticalVerdict: "AI failed, fallback score."
+            overallScore: validationWarning ? 20 : 50,
+            tacticalVerdict: `AI service unavailable. ${validationWarning ? `Disqualification noted: ${validationWarning}` : 'Fallback score applied.'}`,
+            battingScore: 5, bowlingScore: 5, balanceScore: 5, impactScore: 5,
+            homePlaying11: aiRecommendation?.homePlaying11 || [],
+            awayPlaying11: aiRecommendation?.awayPlaying11 || [],
+            homeImpactPlayers: aiRecommendation?.homeImpactPlayers || [],
+            awayImpactPlayers: aiRecommendation?.awayImpactPlayers || []
         };
     }
 };
 
 const selectPlaying11AndImpact = async (teamName, players) => {
-
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const modelName = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+    const model = genAI.getGenerativeModel({ model: modelName });
 
     const prompt = `
 You are a T20 head coach.
 
 Team: ${teamName}
 
-Select:
-- Best Playing 11
-- 4 Impact Players
+Select the absolute best lineups from the available squad:
+1. Best Home Playing 11 (Optimized for spin/slow tracks)
+2. 4 Home Impact Players (Must NOT be in the Home Playing 11)
+3. Best Away Playing 11 (Optimized for pace/bounce)
+4. 4 Away Impact Players (Must NOT be in the Away Playing 11)
+
+MANDATORY RULES:
+1. Each Playing 11 MUST include exactly ONE specialist Wicketkeeper.
+2. Ensure a balance of at least 5 bowling options.
+3. NO OVERLAP: A player in the Playing 11 cannot be an Impact Sub for the SAME mode.
+4. Maximum 4 Overseas players in any Playing 11.
 
 Players:
 ${players.map(p =>
@@ -202,27 +189,30 @@ ${players.map(p =>
 
 Return JSON:
 {
-"playing11":["id"],
-"impactPlayers":["id"]
+"homePlaying11":["id"],
+"homeImpactPlayers":["id"],
+"awayPlaying11":["id"],
+"awayImpactPlayers":["id"]
 }
 `;
 
     try {
-
-        const result = await model.generateContent(prompt);
-        const text = result.response.text();
+        // Route through AIQueue to avoid 429s (this was previously an unqueued direct call)
+        const text = await AIQueue.enqueue(async () => {
+            const result = await model.generateContent(prompt);
+            return result.response.text();
+        });
 
         const cleaned = text.replace(/```json/g, '').replace(/```/g, '').trim();
-
         return JSON.parse(cleaned);
 
     } catch {
-
         return {
-            playing11: players.slice(0, 11).map(p => String(p.id)),
-            impactPlayers: players.slice(11, 15).map(p => String(p.id))
+            homePlaying11: players.slice(0, 11).map(p => String(p.id)),
+            homeImpactPlayers: players.slice(11, 15).map(p => String(p.id)),
+            awayPlaying11: players.slice(0, 11).map(p => String(p.id)),
+            awayImpactPlayers: players.slice(11, 15).map(p => String(p.id))
         };
-
     }
 };
 
@@ -248,7 +238,10 @@ const evaluateAllTeams = async (teamsData) => {
         })
     );
 
-    return evaluations.sort((a, b) => b.evaluation.overallScore - a.evaluation.overallScore);
+    // Sort descending by score then assign rank (1 = highest score)
+    const sorted = evaluations.sort((a, b) => b.evaluation.overallScore - a.evaluation.overallScore);
+    sorted.forEach((team, i) => { team.rank = i + 1; });
+    return sorted;
 
 };
 

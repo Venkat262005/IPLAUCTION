@@ -86,8 +86,19 @@ export const SessionProvider = ({ children }) => {
         });
 
         if (!response.ok) {
-            const err = await response.json();
-            throw new Error(err.error || 'Failed to create session');
+            const contentType = response.headers.get("content-type");
+            if (contentType && contentType.indexOf("application/json") !== -1) {
+                const err = await response.json();
+                throw new Error(err.error || 'Failed to create session');
+            } else {
+                const text = await response.text();
+                throw new Error(`Server error (${response.status}): ${text.slice(0, 100)}`);
+            }
+        }
+
+        const contentType = response.headers.get("content-type");
+        if (!contentType || contentType.indexOf("application/json") === -1) {
+            throw new Error("Server did not return JSON. Check if server is running on the correct port.");
         }
 
         const data = await response.json();

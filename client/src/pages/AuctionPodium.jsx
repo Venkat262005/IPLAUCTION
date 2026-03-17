@@ -15,7 +15,7 @@ import {
     useSpring,
     useTransform,
 } from "framer-motion";
-import { Users, Layout, MessageSquare, Play, Pause, Square, ListChecks, AlertTriangle, Settings, Plane, X } from 'lucide-react';
+import { Users, Layout, MessageSquare, Play, Pause, Square, ListChecks, AlertTriangle, Settings, Plane, X, SkipForward, FastForward } from 'lucide-react';
 import GavelSlam from "../components/GavelSlam";
 import {
     TeamList,
@@ -756,14 +756,37 @@ const AuctionPodium = () => {
                             )}
                             {isModerator && (
                                 <div className="flex items-center gap-1.5 p-1 glass-panel rounded-xl">
-                                    {currentPlayer?.poolID === 'pool2_bowlers' && upcomingPlayers.some(p => ['pool3', 'pool4'].includes(p.poolID)) && (
-                                        <button
-                                            onClick={() => socket.emit("start_interest_voting", { roomCode })}
-                                            className="p-2 lg:p-2.5 rounded-full hover:bg-yellow-500/20 border border-transparent hover:border-yellow-500/30 text-[#D4AF37]/60 hover:text-yellow-500 transition-all flex items-center justify-center"
-                                            title="Start Interest Voting (Pool 3 & 4)"
-                                        >
-                                            <ListChecks className="w-4 h-4" />
-                                        </button>
+                                    {isModerator && (
+                                        (() => {
+                                            const allTeamsReached15 = activeTeams.every(t => (t.playersAcquired || []).length >= 15);
+                                            const hasPool34Remaining = upcomingPlayers.some(p => ['pool3', 'pool4'].includes(p.poolID));
+                                            
+                                            // Only show the button if there are Pool 3/4 players left
+                                            if (!hasPool34Remaining) return null;
+
+                                            return (
+                                                <button
+                                                    onClick={() => {
+                                                        if (allTeamsReached15) {
+                                                            socket.emit("start_interest_voting", { roomCode });
+                                                        } else {
+                                                            setToast({ 
+                                                                message: "Accelerated phase requires all teams to have at least 15 players.", 
+                                                                type: "warning" 
+                                                            });
+                                                        }
+                                                    }}
+                                                    className={`p-2 lg:p-2.5 rounded-full transition-all flex items-center justify-center border ${
+                                                        allTeamsReached15 
+                                                            ? "bg-yellow-500/10 border-yellow-500/30 text-yellow-500 hover:bg-yellow-500/20 shadow-[0_0_10px_rgba(234,179,8,0.1)]"
+                                                            : "bg-white/5 border-white/10 text-white/20 cursor-not-allowed"
+                                                    }`}
+                                                    title={allTeamsReached15 ? "Start Accelerated Interest Voting (Pool 3 & 4)" : "Waiting for all teams to reach 15 players..."}
+                                                >
+                                                    <ListChecks className="w-4 h-4" />
+                                                </button>
+                                            );
+                                        })()
                                     )}
                                     <button
                                         onClick={() =>
@@ -788,6 +811,30 @@ const AuctionPodium = () => {
                                     >
                                         <Square className="w-4 h-4" fill="currentColor" />
                                     </button>
+
+                                    {/* AI Mode Skip Controls */}
+                                    {gameState?.isAiMode && isPrimaryHost && (
+                                        <>
+                                            <button
+                                                onClick={() => socket.emit("skip_player", { roomCode })}
+                                                className="p-2 lg:p-2.5 rounded-full bg-orange-500/10 border border-orange-500/30 text-orange-500 hover:bg-orange-500/20 transition-all flex items-center justify-center shadow-[0_0_10px_rgba(249,115,22,0.1)]"
+                                                title="Skip Current Player (AI Mode)"
+                                            >
+                                                <SkipForward className="w-4 h-4" />
+                                            </button>
+                                            <button
+                                                onClick={() => {
+                                                    if (window.confirm("Are you sure you want to skip the entire current pool?")) {
+                                                        socket.emit("skip_pool", { roomCode });
+                                                    }
+                                                }}
+                                                className="p-2 lg:p-2.5 rounded-full bg-red-500/10 border border-red-500/30 text-red-500 hover:bg-red-500/20 transition-all flex items-center justify-center shadow-[0_0_10px_rgba(239,68,68,0.1)]"
+                                                title="Skip Current Pool (AI Mode)"
+                                            >
+                                                <FastForward className="w-4 h-4" />
+                                            </button>
+                                        </>
+                                    )}
                                     {/* Timer Settings */}
                                     <div className="relative">
                                         <button
@@ -1764,71 +1811,57 @@ const AuctionPodium = () => {
             <AnimatePresence>
                 {toast && (
                     <motion.div
-                        initial={{ opacity: 0, y: -40, scale: 0.95 }}
+                        initial={{ opacity: 0, y: -20, scale: 0.95 }}
                         animate={{ opacity: 1, y: 0, scale: 1 }}
-                        exit={{ opacity: 0, y: -30, scale: 0.95 }}
-                        className="fixed top-6 left-1/2 -translate-x-1/2 z-[250] w-full max-w-sm px-4"
+                        exit={{ opacity: 0, y: -20, scale: 0.95 }}
+                        className="fixed top-4 left-1/2 -translate-x-1/2 z-[300] w-[calc(100%-2rem)] max-w-sm"
                     >
                         <div
-                            className={`flex items-start gap-4 p-5 rounded-2xl border shadow-2xl backdrop-blur-md ${toast.type === "error"
-                                ? "bg-[#FF4C4C]/10 border-[#FF4C4C]/30"
+                            className={`flex items-center gap-2 sm:gap-3 p-2.5 sm:p-4 rounded-xl sm:rounded-2xl border shadow-2xl backdrop-blur-xl ${
+                                toast.type === "error"
+                                ? "bg-red-500/20 border-red-500/30"
                                 : toast.type === "warning"
-                                    ? "bg-[#D4AF37]/10 border-[#D4AF37]/30"
-                                    : "bg-[#FFE58F]/10 border-[#FFE58F]/30"
+                                    ? "bg-yellow-500/20 border-yellow-500/30 text-yellow-500"
+                                    : "bg-yellow-400/20 border-yellow-400/30 text-yellow-400"
                                 }`}
                         >
                             {/* Icon */}
                             <div
-                                className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${toast.type === "error"
-                                    ? "bg-[#FF4C4C]/20"
+                                className={`shrink-0 w-7 h-7 sm:w-10 sm:h-10 rounded-full flex items-center justify-center ${
+                                    toast.type === "error"
+                                    ? "bg-red-500/30"
                                     : toast.type === "warning"
-                                        ? "bg-[#D4AF37]/20"
-                                        : toast.type === "success"
-                                            ? "bg-[#FFE58F]/20"
-                                            : "bg-[#D4AF37]/20"
+                                        ? "bg-yellow-500/30"
+                                        : "bg-yellow-400/30"
                                     }`}
                             >
                                 {toast.type === "error" ? (
-                                    <svg className="w-5 h-5 text-[#FF4C4C]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12" />
-                                    </svg>
+                                    <X className="w-3.5 h-3.5 sm:w-5 sm:h-5 text-red-500" />
                                 ) : toast.type === "success" ? (
-                                    <svg className="w-5 h-5 text-[#FFE58F]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <svg className="w-3.5 h-3.5 sm:w-5 sm:h-5 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" />
                                     </svg>
-                                ) : toast.type === "warning" ? (
-                                    <svg className="w-5 h-5 text-[#D4AF37]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-                                    </svg>
                                 ) : (
-                                    <svg className="w-5 h-5 text-[#FFE58F]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                    </svg>
+                                    <AlertTriangle className="w-3.5 h-3.5 sm:w-5 sm:h-5 text-yellow-500" />
                                 )}
                             </div>
 
                             {/* Message */}
-                            <p
-                                className={`flex-1 text-sm font-bold leading-relaxed ${toast.type === "error"
-                                    ? "text-[#FF4C4C]"
-                                    : toast.type === "warning"
-                                        ? "text-[#FFE58F]"
-                                        : toast.type === "success"
-                                            ? "text-[#FFE58F]"
-                                            : "text-[#FFE58F]"
-                                    }`}
-                            >
-                                {toast.message}
-                            </p>
+                            <div className="flex-1 min-w-0">
+                                <p className={`text-[10px] sm:text-sm font-black leading-tight tracking-tight uppercase ${
+                                    toast.type === "error" ? "text-red-400" : "text-yellow-50"
+                                }`}>
+                                    {toast.message}
+                                </p>
+                            </div>
 
-                            {/* Dismiss */}
+                            {/* Large Hit Area Close Button */}
                             <button
                                 onClick={() => setToast(null)}
-                                className="shrink-0 text-[#D4AF37]/50 hover:text-white transition-colors mt-0.5"
+                                className="shrink-0 -mr-1 p-3 active:scale-95 transition-all text-white/40 hover:text-white"
+                                aria-label="Close notification"
                             >
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
-                                </svg>
+                                <X className="w-5 h-5" />
                             </button>
                         </div>
                     </motion.div>

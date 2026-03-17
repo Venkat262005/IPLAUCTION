@@ -16,8 +16,10 @@ export const SocketProvider = ({ children }) => {
         const newSocket = io(url, {
             path: '/socket.io',
             auth: { token },
-            // Force WebSocket — skips polling handshake, saves ~300ms on every (re)connect
-            transports: ['websocket'],
+            // Use polling first so Vite dev proxy can perform the HTTP handshake,
+            // then socket.io automatically upgrades to WebSocket.
+            // In production (VITE_API_URL set), this upgrades immediately.
+            transports: ['polling', 'websocket'],
             reconnection: true,
             reconnectionAttempts: 10,
             reconnectionDelay: 1000,
@@ -30,7 +32,7 @@ export const SocketProvider = ({ children }) => {
         });
 
         newSocket.on('connect_error', (err) => {
-            console.error('[SOCKET] Connection error:', err.message);
+            console.error('[SOCKET] Connection error:', err.message, err.description || '');
         });
 
         setSocket(newSocket);

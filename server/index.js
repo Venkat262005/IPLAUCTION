@@ -8,8 +8,25 @@ const connectDB = require('./config/db');
 // Load env vars
 dotenv.config();
 
-// Connect to database
-connectDB();
+// Connect to database and start server
+const startServer = async () => {
+    try {
+        await connectDB();
+        
+        const PlayerCache = require('./utils/PlayerCache');
+        await PlayerCache.load();
+
+        const PORT = process.env.PORT || 5000;
+        server.listen(PORT, () => {
+            console.log(`[SUCCESS] Server running on port ${PORT}`);
+            // Start batched DB write flush (writes dirty rooms every 30s instead of per-bid)
+            startPeriodicFlush(30000);
+        });
+    } catch (err) {
+        console.error('💥 Failed to start server:', err.message);
+        process.exit(1);
+    }
+};
 
 const app = express();
 
@@ -31,14 +48,18 @@ const io = new Server(server, {
         origin: '*',
         methods: ['GET', 'POST']
     },
-    // Force WebSocket — eliminates HTTP polling handshake overhead (~300ms saved per connection)
-    transports: ['websocket'],
+    // Allow polling + websocket: polling is required for Vite dev proxy to perform
+    // the HTTP upgrade handshake before switching to WebSocket. In production
+    // (no proxy) socket.io negotiates WebSocket directly for zero overhead.
+    transports: ['polling', 'websocket'],
     // Compress large payloads (new_player with stats, lobby updates)
     perMessageDeflate: {
         threshold: 1024 // Only compress messages > 1KB
     },
     // 100KB max message size (players are large objects)
-    maxHttpBufferSize: 1e5
+    maxHttpBufferSize: 1e5,
+    // Allow CORS for socket.io polling endpoint
+    allowEIO3: true
 });
 
 setupSocketHandlers(io);
@@ -72,14 +93,7 @@ setInterval(() => {
     console.log(`[SYS] RAM: ${Math.round(mem.rss / 1024 / 1024)}MB | Rooms: ${require('./core/RoomManager').getAllRooms().length}`);
 }, 60000);
 
-// Start listening after Cache is primed
-const PORT = process.env.PORT || 5000;
-PlayerCache.load().then(() => {
-    server.listen(PORT, () => {
-        console.log(`[SUCCESS] Server running on port ${PORT}`);
-        // Start batched DB write flush (writes dirty rooms every 30s instead of per-bid)
-        startPeriodicFlush(30000);
-    });
-});
+// Invoke startServer
+startServer();
 
 module.exports = { io };

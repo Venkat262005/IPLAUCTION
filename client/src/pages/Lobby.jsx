@@ -559,18 +559,24 @@ const Lobby = () => {
 
                   {!isDirectJoining ? (
                     <>
-                      <div className="flex gap-2">
+                      <div className="flex flex-wrap gap-2">
                         <button
                           onClick={() => setCreatingRoomType("private")}
-                          className={`flex-1 py-3 rounded-xl border font-bold text-[10px] tracking-widest uppercase transition-all ${creatingRoomType === "private" ? "bg-[#D4AF37] border-[#FFE58F] text-[#1a1205]" : "bg-[#D4AF37]/5 border-[#D4AF37]/20 text-[#D4AF37]/60 hover:bg-[#D4AF37]/10"}`}
+                          className={`flex-1 min-w-[120px] py-3 rounded-xl border font-bold text-[10px] tracking-widest uppercase transition-all ${creatingRoomType === "private" ? "bg-[#D4AF37] border-[#FFE58F] text-[#1a1205]" : "bg-[#D4AF37]/5 border-[#D4AF37]/20 text-[#D4AF37]/60 hover:bg-[#D4AF37]/10"}`}
                         >
                           Private Room
                         </button>
                         <button
                           onClick={() => setCreatingRoomType("public")}
-                          className={`flex-1 py-3 rounded-xl border font-bold text-[10px] tracking-widest uppercase transition-all ${creatingRoomType === "public" ? "bg-[#D4AF37] border-[#FFE58F] text-[#1a1205]" : "bg-[#D4AF37]/5 border-[#D4AF37]/20 text-[#D4AF37]/60 hover:bg-[#D4AF37]/10"}`}
+                          className={`flex-1 min-w-[120px] py-3 rounded-xl border font-bold text-[10px] tracking-widest uppercase transition-all ${creatingRoomType === "public" ? "bg-[#D4AF37] border-[#FFE58F] text-[#1a1205]" : "bg-[#D4AF37]/5 border-[#D4AF37]/20 text-[#D4AF37]/60 hover:bg-[#D4AF37]/10"}`}
                         >
                           Public Room
+                        </button>
+                        <button
+                          onClick={() => setCreatingRoomType("ai")}
+                          className={`flex-1 min-w-[120px] py-3 rounded-xl border font-bold text-[10px] tracking-widest uppercase transition-all ${creatingRoomType === "ai" ? "bg-[#D4AF37] border-[#FFE58F] text-[#1a1205]" : "bg-[#D4AF37]/5 border-[#D4AF37]/20 text-[#D4AF37]/60 hover:bg-[#D4AF37]/10"}`}
+                        >
+                          🤖 Play with AI
                         </button>
                       </div>
                       <button
@@ -863,6 +869,7 @@ const Lobby = () => {
                                 title={onlineMap[t.ownerUserId] === false ? "Offline" : "Online"}
                               />
                               {t.ownerName}{" "}
+                              {t.isBot && <span className="text-[8px] bg-sky-500/20 text-sky-400 px-1.5 py-0.5 rounded uppercase border border-sky-500/30">Bot</span>}
                               {t.ownerUserId === roomState?.hostUserId ? "(Host)" : coHostUserIds.includes(t.ownerUserId) ? "(Co-Host)" : ""}
                             </div>
                           </div>

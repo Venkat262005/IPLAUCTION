@@ -25,29 +25,39 @@ class PlayerCache {
     async load() {
         if (this.isLoaded) return;
 
-        console.log('[PlayerCache] Pre-loading all player pools into memory...');
-        const db = mongoose.connection.client.db('ipl_data');
+        try {
+            console.log('[PlayerCache] Pre-loading all player pools into memory...');
+            
+            if (!mongoose.connection || !mongoose.connection.client) {
+                throw new Error('Mongoose connection not established');
+            }
 
-        const tasks = COLLECTIONS.map(async (collName) => {
-            const rawPlayers = await db.collection(collName).find({}).toArray();
-            this.pools[collName] = [];
+            const db = mongoose.connection.client.db('ipl_data');
 
-            rawPlayers.forEach(p => {
-                const player = normalizePlayer(p, collName);
-                const id = player._id;
+            const tasks = COLLECTIONS.map(async (collName) => {
+                const rawPlayers = await db.collection(collName).find({}).toArray();
+                this.pools[collName] = [];
 
-                this.playersMap.set(id, player);
-                this.pools[collName].push(id);
+                rawPlayers.forEach(p => {
+                    const player = normalizePlayer(p, collName);
+                    const id = player._id;
 
-                if (player.basePrice < this.lowestBasePrice) {
-                    this.lowestBasePrice = player.basePrice;
-                }
+                    this.playersMap.set(id, player);
+                    this.pools[collName].push(id);
+
+                    if (player.basePrice < this.lowestBasePrice) {
+                        this.lowestBasePrice = player.basePrice;
+                    }
+                });
             });
-        });
 
-        await Promise.all(tasks);
-        this.isLoaded = true;
-        console.log(`[PlayerCache] Loaded ${this.playersMap.size} players across ${COLLECTIONS.length} pools.`);
+            await Promise.all(tasks);
+            this.isLoaded = true;
+            console.log(`[PlayerCache] Loaded ${this.playersMap.size} players across ${COLLECTIONS.length} pools.`);
+        } catch (err) {
+            console.error('[PlayerCache] Failed to load:', err.message);
+            throw err; // Re-throw to be caught by index.js
+        }
     }
 
     getPlayer(id) {

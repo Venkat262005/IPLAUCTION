@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useSocket } from '../context/SocketContext';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Plane } from 'lucide-react';
+import { Plane, X, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { useSession } from '../context/SessionContext';
 
 const SquadSelection = () => {
@@ -14,7 +14,23 @@ const SquadSelection = () => {
     const [playing11, setPlaying11] = useState([]);
     const [impactPlayers, setImpactPlayers] = useState([]);
     const [selectionMode, setSelectionMode] = useState('playing11'); // 'playing11' or 'impact'
-    const [timer, setTimer] = useState(240);
+    
+    // Derived state for validation
+    const getRoleType = (role = "") => {
+        const r = role.toLowerCase();
+        if (r.includes("wk") || r.includes("wicket") || r.includes("keeper")) return "wk";
+        if (r.includes("all") || r.includes("ar")) return "ar";
+        if (r.includes("bowl") || r.includes("bw")) return "bowl";
+        return "bat";
+    };
+
+    const xiPlayers = squad.filter(p => playing11.includes(p.player));
+    const impactSubs = squad.filter(p => impactPlayers.includes(p.player));
+    
+    const xiOverseas = xiPlayers.filter(p => p.isOverseas).length;
+    const impactOverseas = impactSubs.filter(p => p.isOverseas).length;
+    const hasWK = xiPlayers.some(p => getRoleType(p.role) === 'wk');
+    const [timer, setTimer] = useState(120);
     const [isAutoSelecting, setIsAutoSelecting] = useState(false);
     const [isConfirmed, setIsConfirmed] = useState(false);
     const [roomState, setRoomState] = useState(null);
@@ -112,15 +128,36 @@ const SquadSelection = () => {
             return;
         }
 
+        const player = squad.find(p => p.player === id);
+        if (!player) return;
+
         // Add to active selection pool
         if (selectionMode === 'playing11') {
             if (playing11.length < 11) {
+                // Overseas check
+                if (player.isOverseas && xiOverseas >= 4) {
+                    setToast({ message: "Maximum 4 Overseas players allowed in Playing 11.", type: 'warning' });
+                    return;
+                }
+                // Impact Sub override check: if any impact subs are overseas, max 3 overseas in XI is a common strategy but IPL rule says
+                // "A team can only play 4 overseas players in the playing 11. If 4 overseas are in the XI, the impact sub must be Indian."
+                // "If fewer than 4 overseas are in the XI, the impact sub can be overseas."
+                if (player.isOverseas && impactOverseas > 0 && xiOverseas >= 3) {
+                    setToast({ message: "You already have Overseas players in Impact Subs. Limit XI to 3 Overseas.", type: 'warning' });
+                    return;
+                }
+
                 setPlaying11([...playing11, id]);
             } else {
                 setToast({ message: "Playing 11 is full. Switch to Impact Players.", type: 'warning' });
             }
         } else {
             if (impactPlayers.length < 4) {
+                // Overseas Impact Sub Rule
+                if (player.isOverseas && xiOverseas >= 4) {
+                    setToast({ message: "Playing 11 already has 4 Overseas players. Impact Subs must be Indian.", type: 'warning' });
+                    return;
+                }
                 setImpactPlayers([...impactPlayers, id]);
             } else {
                 setToast({ message: "Impact Players (4) already selected.", type: 'warning' });
@@ -275,6 +312,19 @@ const SquadSelection = () => {
                                         })}
                                     </div>
                                 </div>
+
+                                <div className="grid grid-cols-2 gap-4 mt-6 pt-4 border-t border-white/5">
+                                    <div className={`p-3 rounded-2xl border ${xiOverseas > 4 ? 'bg-red-500/10 border-red-500/30' : 'bg-white/5 border-white/10'}`}>
+                                        <div className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-1">Overseas (XI)</div>
+                                        <div className={`text-lg font-black ${xiOverseas > 4 ? 'text-red-400' : 'text-white'}`}>{xiOverseas} / 4</div>
+                                    </div>
+                                    <div className={`p-3 rounded-2xl border ${!hasWK && playing11.length > 0 ? 'bg-amber-500/10 border-amber-500/30' : 'bg-white/5 border-white/10'}`}>
+                                        <div className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-1">Wicketkeeper</div>
+                                        <div className={`text-sm font-black uppercase tracking-tight ${hasWK ? 'text-green-400' : 'text-amber-400'}`}>
+                                            {hasWK ? '✓ Selected' : 'Missing'}
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
 
                             <div className="mt-8 space-y-4">
@@ -291,10 +341,10 @@ const SquadSelection = () => {
 
                                 <button
                                     onClick={handleManualSubmit}
-                                    disabled={isConfirmed || isAutoSelecting || playing11.length < 11 || impactPlayers.length < 4}
+                                    disabled={isConfirmed || isAutoSelecting || playing11.length < 11 || impactPlayers.length < 4 || !hasWK}
                                     className={`w-full py-4 rounded-2xl font-black uppercase tracking-[0.2em] text-[10px] transition-all
                                         ${(isConfirmed) ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-white/10 text-white hover:bg-white/20'}
-                                        ${(playing11.length < 11 || impactPlayers.length < 4) && !isConfirmed ? 'opacity-30 cursor-not-allowed' : ''}
+                                        ${(playing11.length < 11 || impactPlayers.length < 4 || !hasWK) && !isConfirmed ? 'opacity-30 cursor-not-allowed' : ''}
                                     `}
                                 >
                                     {isConfirmed ? '✓ Selection Locked' : 'Confirm Tactical Roster'}
@@ -309,73 +359,55 @@ const SquadSelection = () => {
             <AnimatePresence>
                 {toast && (
                     <motion.div
-                        initial={{ opacity: 0, y: -40, scale: 0.95 }}
+                        initial={{ opacity: 0, y: -20, scale: 0.95 }}
                         animate={{ opacity: 1, y: 0, scale: 1 }}
-                        exit={{ opacity: 0, y: -30, scale: 0.95 }}
-                        className="fixed top-6 left-1/2 -translate-x-1/2 z-[250] w-full max-w-sm px-4"
+                        exit={{ opacity: 0, y: -20, scale: 0.95 }}
+                        className="fixed top-4 left-1/2 -translate-x-1/2 z-[300] w-[calc(100%-2rem)] max-w-sm"
                     >
                         <div
-                            className={`flex items-start gap-4 p-5 rounded-2xl border shadow-2xl backdrop-blur-md ${toast.type === "error"
-                                ? "bg-red-500/10 border-red-500/30"
+                            className={`flex items-center gap-2 sm:gap-3 p-2.5 sm:p-4 rounded-xl sm:rounded-2xl border shadow-2xl backdrop-blur-xl ${
+                                toast.type === "error"
+                                ? "bg-red-500/20 border-red-500/30"
                                 : toast.type === "warning"
-                                    ? "bg-yellow-500/10 border-yellow-500/30"
-                                    : toast.type === "success"
-                                        ? "bg-green-500/10 border-green-500/30"
-                                        : "bg-blue-500/10 border-blue-500/30"
+                                    ? "bg-yellow-500/20 border-yellow-500/30 text-yellow-500"
+                                    : "bg-yellow-400/20 border-yellow-400/30 text-yellow-400"
                                 }`}
                         >
                             {/* Icon */}
                             <div
-                                className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${toast.type === "error"
-                                    ? "bg-red-500/20"
+                                className={`shrink-0 w-7 h-7 sm:w-10 sm:h-10 rounded-full flex items-center justify-center ${
+                                    toast.type === "error"
+                                    ? "bg-red-500/30"
                                     : toast.type === "warning"
-                                        ? "bg-yellow-500/20"
-                                        : toast.type === "success"
-                                            ? "bg-green-500/20"
-                                            : "bg-blue-500/20"
+                                        ? "bg-yellow-500/30"
+                                        : "bg-yellow-400/30"
                                     }`}
                             >
                                 {toast.type === "error" ? (
-                                    <svg className="w-5 h-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12" />
-                                    </svg>
+                                    <X className="w-3.5 h-3.5 sm:w-5 sm:h-5 text-red-500" />
                                 ) : toast.type === "success" ? (
-                                    <svg className="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" />
-                                    </svg>
-                                ) : toast.type === "warning" ? (
-                                    <svg className="w-5 h-5 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-                                    </svg>
+                                    <CheckCircle2 className="w-3.5 h-3.5 sm:w-5 sm:h-5 text-yellow-400" />
                                 ) : (
-                                    <svg className="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                    </svg>
+                                    <AlertTriangle className="w-3.5 h-3.5 sm:w-5 sm:h-5 text-yellow-500" />
                                 )}
                             </div>
 
                             {/* Message */}
-                            <p
-                                className={`flex-1 text-sm font-bold leading-relaxed ${toast.type === "error"
-                                    ? "text-red-300"
-                                    : toast.type === "warning"
-                                        ? "text-yellow-300"
-                                        : toast.type === "success"
-                                            ? "text-green-300"
-                                            : "text-blue-200"
-                                    }`}
-                            >
-                                {toast.message}
-                            </p>
+                            <div className="flex-1 min-w-0">
+                                <p className={`text-[10px] sm:text-sm font-black leading-tight tracking-tight uppercase ${
+                                    toast.type === "error" ? "text-red-400" : "text-yellow-50"
+                                }`}>
+                                    {toast.message}
+                                </p>
+                            </div>
 
-                            {/* Dismiss */}
+                            {/* Large Hit Area Close Button */}
                             <button
                                 onClick={() => setToast(null)}
-                                className="shrink-0 text-slate-500 hover:text-white transition-colors mt-0.5"
+                                className="shrink-0 -mr-1 p-3 active:scale-95 transition-all text-white/40 hover:text-white"
+                                aria-label="Close notification"
                             >
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
-                                </svg>
+                                <X className="w-5 h-5" />
                             </button>
                         </div>
                     </motion.div>

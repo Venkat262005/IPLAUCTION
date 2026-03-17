@@ -13,8 +13,13 @@ export default defineConfig({
       '/socket.io': {
         target: 'http://127.0.0.1:5050',
         ws: true,
+        changeOrigin: true,
+        // Required for Vite 5+ to rewrite the WebSocket upgrade origin header
+        rewriteWsOrigin: true,
       },
     },
   },
 })
+
+
 

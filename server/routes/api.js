@@ -29,8 +29,15 @@ router.get('/room/:roomCode/results', async (req, res) => {
             return res.status(400).json({ error: 'Auction is not finished yet' });
         }
 
-        // Return pre-calculated results from DB
-        res.json({ teams: room.franchisesInRoom });
+        // Sort teams by overallScore descending and assign rank (1 = best)
+        const sorted = [...room.franchisesInRoom].sort((a, b) => {
+            const scoreA = a.evaluation?.overallScore ?? 0;
+            const scoreB = b.evaluation?.overallScore ?? 0;
+            return scoreB - scoreA;
+        });
+        sorted.forEach((team, i) => { team.rank = i + 1; });
+
+        res.json({ teams: sorted });
     } catch (error) {
         console.error(error);
         res.status(500).json({ error: 'Server error generating results' });

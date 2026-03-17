@@ -8,6 +8,7 @@ const auctionRoomSchema = new mongoose.Schema({
     coHostUserIds: [{ type: String }], // Up to 3 co-hosts
     status: { type: String, enum: ["Lobby", "Auctioning", "Selection", "Finished"], default: "Lobby" },
     purseLimit: { type: Number, default: 12000 },
+    isAiMode: { type: Boolean, default: false },
 
     // Embedded array of franchises inside this specific room
     franchisesInRoom: [{
@@ -17,6 +18,7 @@ const auctionRoomSchema = new mongoose.Schema({
         ownerSocketId: { type: String },
         ownerName: { type: String },
         ownerUserId: { type: String }, // Permanent secure identifier
+        isBot: { type: Boolean, default: false }, // [NEW] Flag for AI bots
         logoUrl: { type: String },
         currentPurse: { type: Number, default: 12000 },
         overseasCount: { type: Number, default: 0 },

@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { toPng } from 'html-to-image';
 import TeamShareCard from '../components/TeamShareCard';
 import GlobalResultCard from '../components/GlobalResultCard';
+import { X, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { fmtCr } from '../utils/playerUtils';
 
 const ResultsReveal = () => {
@@ -17,6 +18,7 @@ const ResultsReveal = () => {
     const [isSharing, setIsSharing] = useState(false); // Global locking state for any sharing
     const [toast, setToast] = useState(null);
     const shareRef = useRef(null);
+    const [lineupTab, setLineupTab] = useState('home'); // 'home' or 'away'
 
     useEffect(() => {
         // Fetch players to create a fallback name map
@@ -41,7 +43,12 @@ const ResultsReveal = () => {
                 const response = await fetch(`${apiUrl}/api/room/${roomCode}/results`);
                 const data = await response.json();
                 if (response.ok) {
-                    const sorted = data.teams.sort((a, b) => a.rank - b.rank);
+                    // Always sort highest score first; rank may not be set in older results
+                    const sorted = data.teams.sort((a, b) =>
+                        (b.evaluation?.overallScore ?? 0) - (a.evaluation?.overallScore ?? 0)
+                    );
+                    // Ensure rank is always correct regardless of DB state
+                    sorted.forEach((t, i) => { t.rank = i + 1; });
                     setResults(sorted);
                     setSelectedTeam(sorted[0]);
                     setLoading(false);
@@ -129,48 +136,59 @@ const ResultsReveal = () => {
     const handleShareGlobalCard = async () => {
         if (!results || results.length === 0 || isSharing) return;
         setIsSharing(true);
+        setToast({ message: "Preparing Global Verdict... Please wait.", type: 'success' });
 
         try {
-            await new Promise(resolve => setTimeout(resolve, 800));
+            // Wait for layout and images to stabilize
+            await new Promise(resolve => setTimeout(resolve, 1500));
 
             const node = document.getElementById('global-result-card');
             if (!node) throw new Error("Global share card element not found");
 
+            // Ensure the node is actually "renderable" by html-to-image
             const dataUrl = await toPng(node, {
                 cacheBust: true,
                 pixelRatio: 2,
-                backgroundColor: '#1a1205',
+                backgroundColor: '#0f3460',
+                style: {
+                    transform: 'scale(1)',
+                    transformOrigin: 'top left'
+                }
             });
 
-            const fileName = `IPL_Auction_Final_Verdict.png`;
+            if (!dataUrl || dataUrl.length < 1000) throw new Error("Generated image is invalid");
+
+            const fileName = `IPL_2026_Final_Verdict.png`;
             const blobResponse = await fetch(dataUrl);
             const blob = await blobResponse.blob();
             const file = new File([blob], fileName, { type: 'image/png' });
 
             const shareData = {
-                title: `IPL Auction 2026 - Final Verdicts`,
-                text: `The Auction is Over! Here are the Final Squad Verdicts and AI Ratings. #IPLAuction #VercelVerdict`,
+                title: `IPL 2026 - Final Season Verdict`,
+                text: `The Auction is Over! Here is the official AI Season Review. #IPLAuction #AuctionVerdict`,
                 files: [file]
             };
 
-            if (navigator.canShare && navigator.canShare(shareData)) {
-                await navigator.share(shareData);
+            // Enhanced sharing logic
+            if (navigator.share && navigator.canShare && navigator.canShare(shareData)) {
+                try {
+                    await navigator.share(shareData);
+                } catch (shareErr) {
+                    if (shareErr.name !== 'AbortError') throw shareErr;
+                }
             } else {
+                // Fallback: Direct Download
                 const link = document.createElement('a');
                 link.href = dataUrl;
                 link.download = fileName;
                 document.body.appendChild(link);
                 link.click();
                 document.body.removeChild(link);
-
-                setToast({ message: "Global Verdict downloaded! You can now share it.", type: 'success' });
+                setToast({ message: "Global Verdict saved to downloads!", type: 'success' });
             }
         } catch (err) {
-            console.error("Global sharing failed:", err);
-            // Ignore AbortError (user cancelled)
-            if (err.name !== 'AbortError') {
-                setToast({ message: `Sharing failed: ${err.message}`, type: 'error' });
-            }
+            console.error("DEBUG: Global sharing failed:", err);
+            setToast({ message: `Sharing failed: ${err.message || 'Unknown error'}`, type: 'error' });
         } finally {
             setTimeout(() => setIsSharing(false), 1200);
         }
@@ -272,29 +290,29 @@ const ResultsReveal = () => {
                                             ) : (
                                                 <div className="flex items-center gap-4">
                                                     {team.rank === 1 && (
-                                                        <div className="flex items-center gap-3 bg-gradient-to-r from-yellow-500/30 to-yellow-600/10 border border-yellow-500/50 px-6 py-2 rounded-2xl shadow-[0_0_20px_rgba(234,179,8,0.2)]">
-                                                            <span className="text-6xl drop-shadow-2xl translate-y-[-4px]">🥇</span>
+                                                        <div className="flex items-center gap-2 bg-gradient-to-r from-yellow-500/20 to-yellow-600/5 border border-yellow-500/30 px-4 py-1.5 rounded-xl shadow-[0_0_15px_rgba(234,179,8,0.1)]">
+                                                            <span className="text-3xl drop-shadow-lg">🥇</span>
                                                             <div className="flex flex-col">
-                                                                <span className="text-[10px] font-black uppercase tracking-[0.2em] text-yellow-500/70">Winner</span>
-                                                                <span className="text-sm font-black uppercase tracking-widest text-yellow-400">CHAMPION</span>
+                                                                <span className="text-[8px] font-black uppercase tracking-[0.2em] text-yellow-500/70">Champion</span>
+                                                                <span className="text-[10px] font-black uppercase tracking-widest text-yellow-400">WINNER</span>
                                                             </div>
                                                         </div>
                                                     )}
                                                     {team.rank === 2 && (
-                                                        <div className="flex items-center gap-3 bg-gradient-to-r from-slate-400/30 to-slate-500/10 border border-slate-400/50 px-6 py-2 rounded-2xl shadow-[0_0_20px_rgba(148,163,184,0.2)]">
-                                                            <span className="text-6xl drop-shadow-2xl translate-y-[-4px]">🥈</span>
+                                                        <div className="flex items-center gap-2 bg-gradient-to-r from-slate-400/20 to-slate-500/5 border border-slate-400/30 px-4 py-1.5 rounded-xl shadow-[0_0_15px_rgba(148,163,184,0.1)]">
+                                                            <span className="text-3xl drop-shadow-lg">🥈</span>
                                                             <div className="flex flex-col">
-                                                                <span className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400/70">Finalist</span>
-                                                                <span className="text-sm font-black uppercase tracking-widest text-slate-300">RUNNER UP</span>
+                                                                <span className="text-[8px] font-black uppercase tracking-[0.2em] text-slate-400/70">Finalist</span>
+                                                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-300">RUNNER UP</span>
                                                             </div>
                                                         </div>
                                                     )}
                                                     {team.rank === 3 && (
-                                                        <div className="flex items-center gap-3 bg-gradient-to-r from-orange-600/30 to-orange-700/10 border border-orange-600/50 px-6 py-2 rounded-2xl shadow-[0_0_20px_rgba(234,88,12,0.2)]">
-                                                            <span className="text-6xl drop-shadow-2xl translate-y-[-4px]">🥉</span>
+                                                        <div className="flex items-center gap-2 bg-gradient-to-r from-orange-600/20 to-orange-700/5 border border-orange-600/30 px-4 py-1.5 rounded-xl shadow-[0_0_15px_rgba(234,88,12,0.1)]">
+                                                            <span className="text-3xl drop-shadow-lg">🥉</span>
                                                             <div className="flex flex-col">
-                                                                <span className="text-[10px] font-black uppercase tracking-[0.2em] text-orange-600/70">Podium</span>
-                                                                <span className="text-sm font-black uppercase tracking-widest text-orange-500">3RD PLACE</span>
+                                                                <span className="text-[8px] font-black uppercase tracking-[0.2em] text-orange-600/70">Podium</span>
+                                                                <span className="text-[10px] font-black uppercase tracking-widest text-orange-500">3RD PLACE</span>
                                                             </div>
                                                         </div>
                                                     )}
@@ -306,7 +324,12 @@ const ResultsReveal = () => {
                                                 </div>
                                             )}
                                         </div>
-                                        <div className={`text-xl font-black uppercase tracking-tight ${team.evaluation?.overallScore === 0 ? 'text-red-500/50 line-through' : ''}`}>{team.teamName}</div>
+                                        <div className="text-xl font-black uppercase tracking-tight flex items-center gap-2">
+                                            {team.teamName}
+                                            {team.evaluation?.starPlayer && (
+                                                <span className="text-[10px] text-yellow-500">⭐</span>
+                                            )}
+                                        </div>
                                         <div className="text-[10px] text-slate-500 font-bold uppercase">{team.ownerName}</div>
                                     </div>
                                     <div className="text-right">
@@ -402,28 +425,80 @@ const ResultsReveal = () => {
                                             </div>
                                         </div>
 
-                                        {selectedTeam.evaluation?.playing11 && (
-                                            <div className="mb-6 p-6 bg-blue-600/5 border border-blue-500/20 rounded-3xl">
-                                                <h4 className="text-[10px] font-black text-blue-400 uppercase tracking-[0.3em] mb-4 text-center">Final Playing 11</h4>
-                                                <div className="flex flex-wrap justify-center gap-2">
-                                                    {selectedTeam.evaluation.playing11.map((name, idx) => (
-                                                        <span key={`${name}-${idx}`} className="bg-blue-600/10 text-blue-200 px-3 py-1 rounded-full text-[9px] font-black border border-blue-500/10 uppercase tracking-widest">
-                                                            {name}
-                                                        </span>
-                                                    ))}
+                                        <div className="mb-6 p-6 bg-blue-600/5 border border-blue-500/20 rounded-3xl">
+                                            <div className="flex justify-center mb-6">
+                                                <div className="inline-flex bg-white/5 p-1 rounded-2xl border border-white/10">
+                                                    <button 
+                                                        onClick={() => setLineupTab('home')}
+                                                        className={`px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${lineupTab === 'home' ? 'bg-blue-500 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}
+                                                    >
+                                                        Home XI
+                                                    </button>
+                                                    <button 
+                                                        onClick={() => setLineupTab('away')}
+                                                        className={`px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${lineupTab === 'away' ? 'bg-blue-500 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}
+                                                    >
+                                                        Away XI
+                                                    </button>
                                                 </div>
                                             </div>
-                                        )}
 
-                                        {selectedTeam.evaluation?.impactPlayers && (
+                                            <h4 className="text-[10px] font-black text-blue-400 uppercase tracking-[0.3em] mb-4 text-center">
+                                                {lineupTab === 'home' ? 'Home Fortress Playing 11' : 'Road Warrior Playing 11'}
+                                            </h4>
+                                            
+                                            <div className="flex flex-wrap justify-center gap-2">
+                                                {(() => {
+                                                    // Build a name-lookup map from the team's own acquired squad
+                                                    const squadMap = {};
+                                                    (selectedTeam.playersAcquired || []).forEach(p => {
+                                                        const id = String(p.player?._id || p.player || '');
+                                                        const name = p.name || p.player?.name || p.player?.player || allPlayersMap[id]?.name || allPlayersMap[id]?.player;
+                                                        if (id) squadMap[id] = name;
+                                                    });
+                                                    const lineup = lineupTab === 'home'
+                                                        ? (selectedTeam.evaluation?.homePlaying11 || selectedTeam.evaluation?.playing11 || [])
+                                                        : (selectedTeam.evaluation?.awayPlaying11 || selectedTeam.evaluation?.playing11 || []);
+                                                    return lineup.map((entry, idx) => {
+                                                        // entry may be a name string or an ID string
+                                                        const isId = /^[0-9a-fA-F]{24}$/.test(entry);
+                                                        const display = isId ? (squadMap[entry] || allPlayersMap[entry]?.name || allPlayersMap[entry]?.player || entry) : entry;
+                                                        return (
+                                                            <span key={`${entry}-${idx}`} className="bg-blue-600/10 text-blue-200 px-3 py-1 rounded-full text-[9px] font-black border border-blue-500/10 uppercase tracking-widest">
+                                                                {display}
+                                                            </span>
+                                                        );
+                                                    });
+                                                })()}
+                                            </div>
+                                        </div>
+
+                                        {(selectedTeam.evaluation?.homeImpactPlayers || selectedTeam.evaluation?.awayImpactPlayers || selectedTeam.evaluation?.impactPlayers) && (
                                             <div className="mb-8 p-6 bg-purple-600/5 border border-purple-500/20 rounded-3xl">
-                                                <h4 className="text-[10px] font-black text-purple-400 uppercase tracking-[0.3em] mb-4 text-center">Strategic Impact Subs</h4>
+                                                <h4 className="text-[10px] font-black text-purple-400 uppercase tracking-[0.3em] mb-4 text-center italic">
+                                                    {lineupTab === 'home' ? 'Home Strategic Impact Subs' : 'Away Strategic Impact Subs'}
+                                                </h4>
                                                 <div className="flex flex-wrap justify-center gap-2">
-                                                    {selectedTeam.evaluation.impactPlayers.map((name, idx) => (
-                                                        <span key={`${name}-${idx}`} className="bg-purple-600/10 text-purple-200 px-3 py-1 rounded-full text-[9px] font-black border border-purple-500/10 uppercase tracking-widest">
-                                                            {name}
-                                                        </span>
-                                                    ))}
+                                                {(() => {
+                                                    const squadMap = {};
+                                                    (selectedTeam.playersAcquired || []).forEach(p => {
+                                                        const id = String(p.player?._id || p.player || '');
+                                                        const name = p.name || p.player?.name || p.player?.player || allPlayersMap[id]?.name || allPlayersMap[id]?.player;
+                                                        if (id) squadMap[id] = name;
+                                                    });
+                                                    const impact = lineupTab === 'home'
+                                                        ? (selectedTeam.evaluation?.homeImpactPlayers || selectedTeam.evaluation?.impactPlayers || [])
+                                                        : (selectedTeam.evaluation?.awayImpactPlayers || selectedTeam.evaluation?.impactPlayers || []);
+                                                    return impact.map((entry, idx) => {
+                                                        const isId = /^[0-9a-fA-F]{24}$/.test(entry);
+                                                        const display = isId ? (squadMap[entry] || allPlayersMap[entry]?.name || allPlayersMap[entry]?.player || entry) : entry;
+                                                        return (
+                                                            <span key={`${entry}-${idx}`} className="bg-purple-600/10 text-purple-200 px-3 py-1 rounded-full text-[9px] font-black border border-purple-500/10 uppercase tracking-widest">
+                                                                {display}
+                                                            </span>
+                                                        );
+                                                    });
+                                                })()}
                                                 </div>
                                             </div>
                                         )}
@@ -464,73 +539,55 @@ const ResultsReveal = () => {
             <AnimatePresence>
                 {toast && (
                     <motion.div
-                        initial={{ opacity: 0, y: -40, scale: 0.95 }}
+                        initial={{ opacity: 0, y: -20, scale: 0.95 }}
                         animate={{ opacity: 1, y: 0, scale: 1 }}
-                        exit={{ opacity: 0, y: -30, scale: 0.95 }}
-                        className="fixed top-6 left-1/2 -translate-x-1/2 z-[250] w-full max-w-sm px-4"
+                        exit={{ opacity: 0, y: -20, scale: 0.95 }}
+                        className="fixed top-4 left-1/2 -translate-x-1/2 z-[300] w-[calc(100%-2rem)] max-w-sm"
                     >
                         <div
-                            className={`flex items-start gap-4 p-5 rounded-2xl border shadow-2xl backdrop-blur-md ${toast.type === "error"
-                                ? "bg-red-500/10 border-red-500/30"
+                            className={`flex items-center gap-2 sm:gap-3 p-2.5 sm:p-4 rounded-xl sm:rounded-2xl border shadow-2xl backdrop-blur-xl ${
+                                toast.type === "error"
+                                ? "bg-red-500/20 border-red-500/30"
                                 : toast.type === "warning"
-                                    ? "bg-yellow-500/10 border-yellow-500/30"
-                                    : toast.type === "success"
-                                        ? "bg-green-500/10 border-green-500/30"
-                                        : "bg-blue-500/10 border-blue-500/30"
+                                    ? "bg-yellow-500/20 border-yellow-500/30 text-yellow-500"
+                                    : "bg-yellow-400/20 border-yellow-400/30 text-yellow-400"
                                 }`}
                         >
                             {/* Icon */}
                             <div
-                                className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${toast.type === "error"
-                                    ? "bg-red-500/20"
+                                className={`shrink-0 w-7 h-7 sm:w-10 sm:h-10 rounded-full flex items-center justify-center ${
+                                    toast.type === "error"
+                                    ? "bg-red-500/30"
                                     : toast.type === "warning"
-                                        ? "bg-yellow-500/20"
-                                        : toast.type === "success"
-                                            ? "bg-green-500/20"
-                                            : "bg-blue-500/20"
+                                        ? "bg-yellow-500/30"
+                                        : "bg-yellow-400/30"
                                     }`}
                             >
                                 {toast.type === "error" ? (
-                                    <svg className="w-5 h-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12" />
-                                    </svg>
+                                    <X className="w-3.5 h-3.5 sm:w-5 sm:h-5 text-red-500" />
                                 ) : toast.type === "success" ? (
-                                    <svg className="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" />
-                                    </svg>
-                                ) : toast.type === "warning" ? (
-                                    <svg className="w-5 h-5 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-                                    </svg>
+                                    <CheckCircle2 className="w-3.5 h-3.5 sm:w-5 sm:h-5 text-yellow-400" />
                                 ) : (
-                                    <svg className="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                    </svg>
+                                    <AlertTriangle className="w-3.5 h-3.5 sm:w-5 sm:h-5 text-yellow-500" />
                                 )}
                             </div>
 
                             {/* Message */}
-                            <p
-                                className={`flex-1 text-sm font-bold leading-relaxed ${toast.type === "error"
-                                    ? "text-red-300"
-                                    : toast.type === "warning"
-                                        ? "text-yellow-300"
-                                        : toast.type === "success"
-                                            ? "text-green-300"
-                                            : "text-blue-200"
-                                    }`}
-                            >
-                                {toast.message}
-                            </p>
+                            <div className="flex-1 min-w-0">
+                                <p className={`text-[10px] sm:text-sm font-black leading-tight tracking-tight uppercase ${
+                                    toast.type === "error" ? "text-red-400" : "text-yellow-50"
+                                }`}>
+                                    {toast.message}
+                                </p>
+                            </div>
 
-                            {/* Dismiss */}
+                            {/* Large Hit Area Close Button */}
                             <button
                                 onClick={() => setToast(null)}
-                                className="shrink-0 text-slate-500 hover:text-white transition-colors mt-0.5"
+                                className="shrink-0 -mr-1 p-3 active:scale-95 transition-all text-white/40 hover:text-white"
+                                aria-label="Close notification"
                             >
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
-                                </svg>
+                                <X className="w-5 h-5" />
                             </button>
                         </div>
                     </motion.div>

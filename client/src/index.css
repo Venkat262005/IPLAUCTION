@@ -196,3 +196,76 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: #D4AF37;
 }
+
+/* Cinematic Legend Background Utilities */
+.bg-radial-vignette {
+  background: radial-gradient(circle, transparent 20%, rgba(0, 0, 0, 0.4) 60%, rgba(0, 0, 0, 0.9) 100%);
+}
+
+.bg-mesh-grid {
+  background-image: linear-gradient(rgba(212, 175, 55, 0.1) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(212, 175, 55, 0.1) 1px, transparent 1px);
+  background-size: 50px 50px;
+}
+
+@keyframes mesh-slide {
+  0% { transform: translateY(0); }
+  100% { transform: translateY(50px); }
+}
+
+@keyframes cinematic-flash {
+  0% { opacity: 0; }
+  10% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+@keyframes slow-zoom {
+  0% { transform: scale(1); }
+  100% { transform: scale(1.1); }
+}
+
+@keyframes slide-up-reveal {
+  0% { transform: translateY(100px); opacity: 0; filter: blur(10px); }
+  100% { transform: translateY(0); opacity: 1; filter: blur(0); }
+}
+
+.animate-mesh-slide {
+  animation: mesh-slide 10s linear infinite;
+}
+
+.animate-cinematic-flash {
+  animation: cinematic-flash 1.5s ease-out forwards;
+}
+
+.animate-slow-zoom {
+  animation: slow-zoom 8s ease-in-out infinite alternate;
+}
+
+.animate-slide-up {
+  animation: slide-up-reveal 1s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes light-beam-right {
+  0% { transform: skewX(12deg) rotate(35deg); opacity: 0.1; }
+  50% { opacity: 0.3; transform: skewX(12deg) rotate(40deg); }
+  100% { opacity: 0.1; transform: skewX(12deg) rotate(35deg); }
+}
+
+@keyframes light-beam-left {
+  0% { transform: skewX(-12deg) rotate(-45deg); opacity: 0.05; }
+  50% { opacity: 0.2; transform: skewX(-12deg) rotate(-40deg); }
+  100% { opacity: 0.05; transform: skewX(-12deg) rotate(-45deg); }
+}
+
+.animate-light-beam-right {
+  animation: light-beam-right 10s linear infinite;
+}
+
+.animate-light-beam-left {
+  animation: light-beam-left 12s linear infinite;
+}
+
+.gpu-accelerated {
+  will-change: transform, opacity;
+  transform: translateZ(0);
+}

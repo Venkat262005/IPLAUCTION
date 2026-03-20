@@ -60,23 +60,27 @@ function StadiumBackground() {
   );
 }
 
+import { VoiceProvider } from "./context/VoiceContext";
+
 function App() {
   return (
     <SessionProvider>
       <SocketProvider>
-        <Router>
-          <StadiumBackground />
-          <div className="min-h-screen text-white w-full overflow-hidden font-sans">
-            <Routes>
-              <Route path="/" element={<Lobby />} />
-              <Route path="/join/:roomCode" element={<Lobby />} />
-              <Route path="/public-rooms" element={<PublicRooms />} />
-              <Route path="/auction/:roomCode" element={<AuctionPodium />} />
-              <Route path="/selection/:roomCode" element={<SquadSelection />} />
-              <Route path="/results/:roomCode" element={<ResultsReveal />} />
-            </Routes>
-          </div>
-        </Router>
+        <VoiceProvider>
+          <Router>
+            <StadiumBackground />
+            <div className="min-h-screen text-white w-full overflow-hidden font-sans">
+              <Routes>
+                <Route path="/" element={<Lobby />} />
+                <Route path="/join/:roomCode" element={<Lobby />} />
+                <Route path="/public-rooms" element={<PublicRooms />} />
+                <Route path="/auction/:roomCode" element={<AuctionPodium />} />
+                <Route path="/selection/:roomCode" element={<SquadSelection />} />
+                <Route path="/results/:roomCode" element={<ResultsReveal />} />
+              </Routes>
+            </div>
+          </Router>
+        </VoiceProvider>
       </SocketProvider>
     </SessionProvider>
   );

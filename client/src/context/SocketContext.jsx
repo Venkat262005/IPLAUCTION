@@ -40,8 +40,8 @@ export const SocketProvider = ({ children }) => {
     }, []);
 
     useEffect(() => {
-        // Initial connection with whatever is in localStorage
-        const token = localStorage.getItem('ipl_session_token') || null;
+        // Initial connection with whatever is in sessionStorage
+        const token = sessionStorage.getItem('ipl_session_token') || null;
         const s = connect(token);
 
         return () => {

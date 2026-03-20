@@ -9,42 +9,68 @@ const groq = process.env.GROQ_API_KEY ? new Groq({ apiKey: process.env.GROQ_API_
  * Centrally manages AI requests with an automatic fallback mechanism.
  * Tries Gemini (Primary) -> Tries Groq (Secondary) -> Throws/Returns null
  */
+/**
+ * Centrally manages AI requests with a smart scheduling & fallback mechanism.
+ * Uses AIQueue to decide which provider (Gemini/Groq/Grok) to use based on availability and priority.
+ */
 async function getAIResponse(prompt, type = 'evaluation') {
     const geminiModelName = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
-    const groqModelName = process.env.GROQ_MODEL || 'llama-3.1-70b-versatile';
+    const groqModelName = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+    const xaiModelName = process.env.XAI_MODEL || 'grok-beta';
 
-    // 1. Try Gemini
-    try {
-        console.log(`--- [AI] Attempting Gemini (${type}) ---`);
-        const model = genAI.getGenerativeModel({ model: geminiModelName });
-        const text = await AIQueue.enqueue(async () => {
+    const tasks = {
+        gemini: async () => {
+            const model = genAI.getGenerativeModel({ model: geminiModelName }, { apiVersion: 'v1' });
             const result = await model.generateContent(prompt);
-            const response = await result.response;
-            return response.text();
-        });
-        if (text) return text;
-    } catch (err) {
-        console.error(`[AI-ERROR] Gemini failed (${type}):`, err.message);
-    }
-
-    // 2. Try Groq (Fallback)
-    if (groq) {
-        try {
-            console.log(`--- [AI] Falling back to Groq (${type}) ---`);
+            return result.response.text();
+        },
+        groq: async () => {
+            if (!groq) throw new Error('Groq not configured');
             const chatCompletion = await groq.chat.completions.create({
                 messages: [{ role: 'user', content: prompt }],
                 model: groqModelName,
             });
-            const text = chatCompletion.choices[0]?.message?.content;
-            if (text) return text;
-        } catch (groqErr) {
-            console.error(`[AI-ERROR] Groq fallback failed (${type}):`, groqErr.message);
+            return chatCompletion.choices[0]?.message?.content;
+        },
+        xai: async () => {
+            if (!process.env.XAI_API_KEY) throw new Error('XAI not configured');
+            const response = await fetch('https://api.x.ai/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${process.env.XAI_API_KEY}`
+                },
+                body: JSON.stringify({
+                    messages: [{ role: 'user', content: prompt }],
+                    model: xaiModelName,
+                    temperature: 0
+                })
+            });
+            const data = await response.json();
+            return data.choices?.[0]?.message?.content;
         }
-    } else {
-        console.warn(`[AI-WARN] Groq fallback skipped (No GROQ_API_KEY provided)`);
-    }
+    };
 
-    throw new Error('All AI providers failed');
+    try {
+        const text = await AIQueue.enqueue({ tasks, label: type });
+        return cleanAIResponse(text);
+    } catch (err) {
+        console.error(`[AIQueue-FATAL] All providers failed for ${type}:`, err.message);
+        throw err;
+    }
+}
+
+/**
+ * Ensures the AI response is valid JSON, stripping markdown tags if present.
+ */
+function cleanAIResponse(text) {
+    if (!text) return "";
+    let cleaned = text.trim();
+    // Remove markdown code blocks if present
+    if (cleaned.startsWith('```')) {
+        cleaned = cleaned.replace(/^```json\n?/, '').replace(/```$/, '').trim();
+    }
+    return cleaned;
 }
 
 // ── Home Ground Pitch Data ──────────────────────────────────────────────────
@@ -243,6 +269,8 @@ EVALUATION CRITERIA (judge ALL of these strictly)
 4. AUCTION INTELLIGENCE: Did they over-invest in similar profiles? Gap in critical roles?
 
 5. For evaluation, treat every player as their IPL PRIME version.
+   - CRITICAL ROLE RECOGNITION: Players like Sunil Narine, Ravindra Jadeja, and Axar Patel MUST be recognized as ELITE SPINNERS even if their role is 'All-Rounder'. 
+   - Do NOT call a squad "lacking in spin" if they have elite all-rounder spinners like Narine or Jadeja.
 
 Respond ONLY with JSON:
 
@@ -306,9 +334,9 @@ Home Strategy: ${homeGround.notes}
 
 Select the absolute best lineups from the available squad:
 1. Best HOME Playing 11 — optimise for: ${homeGround.pitchType}
-2. Exactly 8 potential HOME Impact Players (Must be unique and exclude Playing 11)
+2. Exactly 4 potential HOME Impact Players (Must be unique and exclude Playing 11)
 3. Best AWAY Playing 11 — optimise for generic away conditions (pace/bounce)
-4. Exactly 8 potential AWAY Impact Players (Must be unique and exclude Playing 11)
+4. Exactly 4 potential AWAY Impact Players (Must be unique and exclude Playing 11)
 
 MANDATORY RULES:
 1. Each Playing 11 MUST include exactly ONE specialist Wicketkeeper.
@@ -317,11 +345,13 @@ MANDATORY RULES:
 4. Maximum 4 Overseas players in any Playing 11.
 5. HOME XI must specifically favour ${homeGround.spinFriendly ? 'SPINNERS — this is a spin-friendly venue. Prioritise quality spin bowlers over pace.' : 'PACE BOWLERS and POWER HITTERS — this venue rewards pace attack and big hitting.'}.
 6. The #1 Impact Sub MUST be the player who most improves the XI when brought on (primary tactical sub).
+7. Spinner Recognition: Treat Sunil Narine, Ravindra Jadeja, and Axar Patel as quality spin options for the 11 even if categorized as All-rounders.
 
 Players:
-${players.map(p =>
-        `ID:${p.id} Name:${p.name} Role:${p.role} SR:${p.stats?.strikeRate || 'N/A'} Econ:${p.stats?.economy || 'N/A'} Avg:${p.stats?.average || 'N/A'}`
-    ).join('\n')}
+${players.map(p => {
+        const id = String(p._id || p.id || '');
+        return `ID:${id} Name:${p.name} Role:${p.role} SR:${p.stats?.strikeRate || 'N/A'} Econ:${p.stats?.economy || 'N/A'} Avg:${p.stats?.average || 'N/A'}`;
+    }).join('\n')}
 
 Return JSON:
 {
@@ -374,11 +404,12 @@ Return JSON:
         };
 
     } catch {
+        const ids = players.map(p => String(p._id || p.id));
         return {
-            homePlaying11: players.slice(0, 11).map(p => String(p.id)),
-            homeImpactPlayers: players.slice(11, 15).map(p => String(p.id)),
-            awayPlaying11: players.slice(0, 11).map(p => String(p.id)),
-            awayImpactPlayers: players.slice(11, 15).map(p => String(p.id))
+            homePlaying11: ids.slice(0, 11),
+            homeImpactPlayers: ids.slice(11, 15),
+            awayPlaying11: ids.slice(0, 11),
+            awayImpactPlayers: ids.slice(11, 15)
         };
     }
 };
@@ -406,11 +437,33 @@ const evaluateAllTeams = async (teamsData) => {
     );
 
     // Sort descending by score then assign rank (1 = highest score)
-    const sorted = evaluations.sort((a, b) => b.evaluation.overallScore - a.evaluation.overallScore);
-    sorted.forEach((team, i) => { team.rank = i + 1; });
-    return sorted;
+    // To ensure no two teams have the same score, we add a tiny, deterministic jitter 
+    // based on their position in the squad catalog if initial scores are equal.
+    const sorted = evaluations.sort((a, b) => {
+        const diff = b.evaluation.overallScore - a.evaluation.overallScore;
+        if (Math.abs(diff) < 0.001) {
+            // Tie-breaker: use total purse spent or a deterministic index-based jitter
+            // We'll add a tiny fraction based on index to ensure uniqueness for the UI
+            return 0; // Will be handled after initial sort
+        }
+        return diff;
+    });
 
-};
+    // Second pass to ensure absolute uniqueness for the leaderboard
+    const seenScores = new Set();
+    sorted.forEach((team, i) => {
+        let score = team.evaluation.overallScore;
+        // If score already exists, decrement slightly to ensure unique rank
+        while (seenScores.has(score)) {
+            score -= 0.1;
+        }
+        team.evaluation.overallScore = parseFloat(score.toFixed(1));
+        seenScores.add(team.evaluation.overallScore);
+        team.rank = i + 1;
+    });
+
+    return sorted;
+}
 
 module.exports = {
     evaluateAllTeams,

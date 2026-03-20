@@ -129,3 +129,46 @@ export const playWarningBeep = () => {
     osc.start();
     osc.stop(audioCtx.currentTime + 0.3);
 };
+
+export const playLegendIntro = () => {
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    
+    // Silence requested by user: BG music removed
+    /*
+    if (currentLegendAudio) {
+        currentLegendAudio.pause();
+        currentLegendAudio = null;
+    }
+
+    try {
+        const filename = '/Ascension_of_the_Dawn.mp4';
+        currentLegendAudio = new Audio(filename);
+        currentLegendAudio.volume = 0.6;
+        currentLegendAudio.play().catch(e => {
+            console.warn(`Legend audio (${filename}) not found or blocked, falling back to audio.mp3:`, e);
+            currentLegendAudio = new Audio('/audio.mp3');
+            currentLegendAudio.volume = 0.6;
+            currentLegendAudio.play().catch(err => console.error("Fallback legend audio failed:", err));
+        });
+    } catch (err) {
+        console.error("Failed to play legend intro audio:", err);
+    }
+    */
+};
+
+export const stopLegendIntro = () => {
+    // Silence requested by user: No audio to stop
+    /*
+    if (currentLegendAudio) {
+        const fadeInterval = setInterval(() => {
+            if (currentLegendAudio.volume > 0.1) {
+                currentLegendAudio.volume -= 0.1;
+            } else {
+                clearInterval(fadeInterval);
+                currentLegendAudio.pause();
+                currentLegendAudio = null;
+            }
+        }, 100);
+    }
+    */
+};

@@ -6,6 +6,7 @@ import TeamShareCard from '../components/TeamShareCard';
 import GlobalResultCard from '../components/GlobalResultCard';
 import { X, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { fmtCr } from '../utils/playerUtils';
+import Toast from '../components/Toast';
 
 const ResultsReveal = () => {
     const { roomCode } = useParams();
@@ -571,65 +572,11 @@ const ResultsReveal = () => {
                 </div>
             </div>
 
-            {/* Toast Notification Modal */}
-            <AnimatePresence>
-                {toast && (
-                    <motion.div
-                        initial={{ opacity: 0, y: -20, scale: 0.95 }}
-                        animate={{ opacity: 1, y: 0, scale: 1 }}
-                        exit={{ opacity: 0, y: -20, scale: 0.95 }}
-                        onClick={() => setToast(null)}
-                        className="fixed top-4 left-1/2 -translate-x-1/2 z-[300] w-[calc(100%-2rem)] max-w-sm cursor-pointer"
-                    >
-                        <div
-                            className={`flex items-center gap-2 sm:gap-3 p-2.5 sm:p-4 rounded-xl sm:rounded-2xl border shadow-2xl backdrop-blur-xl ${
-                                toast.type === "error"
-                                ? "bg-red-500/20 border-red-500/30"
-                                : toast.type === "warning"
-                                    ? "bg-yellow-500/20 border-yellow-500/30 text-yellow-500"
-                                    : "bg-yellow-400/20 border-yellow-400/30 text-yellow-400"
-                                }`}
-                        >
-                            {/* Icon */}
-                            <div
-                                className={`shrink-0 w-7 h-7 sm:w-10 sm:h-10 rounded-full flex items-center justify-center ${
-                                    toast.type === "error"
-                                    ? "bg-red-500/30"
-                                    : toast.type === "warning"
-                                        ? "bg-yellow-500/30"
-                                        : "bg-yellow-400/30"
-                                    }`}
-                            >
-                                {toast.type === "error" ? (
-                                    <X className="w-3.5 h-3.5 sm:w-5 sm:h-5 text-red-500" />
-                                ) : toast.type === "success" ? (
-                                    <CheckCircle2 className="w-3.5 h-3.5 sm:w-5 sm:h-5 text-yellow-400" />
-                                ) : (
-                                    <AlertTriangle className="w-3.5 h-3.5 sm:w-5 sm:h-5 text-yellow-500" />
-                                )}
-                            </div>
-
-                            {/* Message */}
-                            <div className="flex-1 min-w-0">
-                                <p className={`text-[10px] sm:text-sm font-black leading-tight tracking-tight uppercase ${
-                                    toast.type === "error" ? "text-red-400" : "text-yellow-50"
-                                }`}>
-                                    {toast.message}
-                                </p>
-                            </div>
-
-                            {/* Large Hit Area Close Button */}
-                            <button
-                                onClick={(e) => { e.stopPropagation(); setToast(null); }}
-                                className="shrink-0 -mr-1 min-w-[44px] min-h-[44px] flex items-center justify-center active:scale-95 transition-all text-white/60"
-                                aria-label="Close notification"
-                            >
-                                <X className="w-5 h-5" />
-                            </button>
-                        </div>
-                    </motion.div>
-                )}
-            </AnimatePresence>
+            <Toast
+                message={toast?.message}
+                type={toast?.type}
+                onClose={() => setToast(null)}
+            />
         </div>
     );
 };

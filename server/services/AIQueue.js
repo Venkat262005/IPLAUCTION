@@ -1,88 +1,120 @@
 /**
  * AIQueue.js
- * Global rate-limiter for all Gemini API calls.
- *
- * Key rules for the free tier (gemini-*-flash):
- *   - 5 requests/minute (RPM)
- *   - 20 requests/day (RPD)
- *
- * Strategy:
- *   - Concurrency = 1 (serial queue)
- *   - 13 second gap between tasks => ~4.6 RPM, safely under the 5 RPM cap
- *   - On 429, parse retryDelay from the error and wait that long before retrying
- *   - Max 3 retries per task; after that, reject so the caller uses its fallback
+ * Smart Multi-Provider Scheduler.
+ * 
+ * Logic:
+ * 1. Priority: Gemini (5 RPM) > Groq (High) > Grok (High).
+ * 2. Gemini Tracker: Counts requests in the last 60s. 
+ *    If Gemini is at 5/min, it "overflows" to secondary providers immediately.
+ * 3. Health Tracker: If a provider hits 429, it goes on a "cooldown" (60s).
  */
-
-const INTER_TASK_DELAY_MS = 13000; // 13 s → ~4.6 RPM, safely under the 5 RPM cap
-const MAX_RETRIES = 3;
 
 class AIQueue {
     constructor() {
         this.running = 0;
         this.queue = [];
+        this.history = {
+            gemini: { requests: [], cooldownUntil: 0, priority: 1 },
+            groq: { requests: [], cooldownUntil: 0, priority: 2 },
+            xai: { requests: [], cooldownUntil: 0, priority: 3 }
+        };
     }
 
     /**
-     * enqueue – wrap a Gemini call and get a Promise back.
-     * @param {Function} task - async () => result
+     * enqueue – Add a task to the smart router.
      */
-    enqueue(task) {
+    enqueue(taskData) {
         return new Promise((resolve, reject) => {
-            this.queue.push({ task, resolve, reject, retries: 0 });
+            this.queue.push({ ...taskData, resolve, reject });
             this._process();
         });
     }
 
     async _process() {
-        if (this.running >= 1 || this.queue.length === 0) return;
+        if (this.queue.length === 0) return;
 
-        this.running = 1;
-        const item = this.queue.shift();
+        const item = this.queue[0]; // Peek at the first item
+        
+        // Find the best available provider for this specific item
+        const providerName = this._getBestProvider(item);
+        
+        if (!providerName) {
+            // No providers available for this item (either all on cooldown or all exhausted for this item)
+            // If we've truly tried every single task in item.tasks, we must reject.
+            const allTasksTried = Object.keys(item.tasks).every(p => (item.triedProviders || []).includes(p));
+            if (allTasksTried) {
+                console.error(`[AIQueue-FATAL] All possible providers exhausted for task '${item.label}'`);
+                this.queue.shift(); // Remove it
+                item.reject(new Error(`All AI providers (${Object.keys(item.tasks).join(', ')}) failed or are unavailable.`));
+                this._process(); // Move to next item immediately
+                return;
+            }
 
+            // Otherwise, they are just on cooldown. Wait 5s and try again.
+            setTimeout(() => this._process(), 5000);
+            return;
+        }
+
+        // Remove the item we are about to execute
+        this.queue.shift();
+        this._execute(item, providerName);
+    }
+
+    _getBestProvider(item) {
+        const now = Date.now();
+        const itemTried = item.triedProviders || [];
+
+        const status = ['gemini', 'groq', 'xai'].filter(p => {
+            // 1. Does the task even support this provider?
+            if (!item.tasks[p]) return false;
+
+            // 2. Has this specific item already tried this provider?
+            if (itemTried.includes(p)) return false;
+
+            // 3. Is the provider globally on cooldown (429)?
+            if (this.history[p].cooldownUntil > now) return false;
+            
+            // 4. Rate Limit tracking for Gemini
+            if (p === 'gemini') {
+                const oneMinAgo = now - 60000;
+                this.history.gemini.requests = this.history.gemini.requests.filter(t => t > oneMinAgo);
+                if (this.history.gemini.requests.length >= 5) return false;
+            }
+            return true;
+        });
+
+        if (status.length === 0) return null;
+
+        // Pick by priority among available
+        return status.sort((a,b) => this.history[a].priority - this.history[b].priority)[0];
+    }
+
+    async _execute(item, provider) {
+        if (!item.triedProviders) item.triedProviders = [];
+        
         try {
-            const result = await this._runWithRetry(item);
+            this.history[provider].requests.push(Date.now());
+            console.log(`[AIQueue] Routing task '${item.label}' to ${provider}... (Attempt ${item.triedProviders.length + 1})`);
+            
+            const result = await item.tasks[provider]();
             item.resolve(result);
         } catch (err) {
-            item.reject(err);
-        } finally {
-            // Mandatory cooldown between tasks to stay under RPM cap
-            await this._sleep(INTER_TASK_DELAY_MS);
-            this.running = 0;
-            this._process();
-        }
-    }
+            console.warn(`[AIQueue] ${provider} failed for '${item.label}':`, err.message);
+            
+            // Mark this provider as tried for this item
+            item.triedProviders.push(provider);
 
-    async _runWithRetry(item) {
-        for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-            try {
-                return await item.task();
-            } catch (err) {
-                const is429 = err?.status === 429 || err?.message?.includes('429') || err?.message?.includes('Too Many Requests');
-
-                if (!is429 || attempt === MAX_RETRIES) {
-                    throw err;
-                }
-
-                // Parse the retryDelay from the Gemini error payload
-                let waitMs = 60000; // default: wait 60s
-                try {
-                    const retryInfo = err?.errorDetails?.find(d => d['@type']?.includes('RetryInfo'));
-                    if (retryInfo?.retryDelay) {
-                        const seconds = parseFloat(retryInfo.retryDelay.replace('s', ''));
-                        if (!isNaN(seconds) && seconds > 0) {
-                            waitMs = Math.ceil(seconds * 1000) + 2000; // add 2s buffer
-                        }
-                    }
-                } catch (_) { /* use default */ }
-
-                console.warn(`[AIQueue] 429 on attempt ${attempt + 1}. Waiting ${Math.round(waitMs / 1000)}s before retry...`);
-                await this._sleep(waitMs);
+            const is429 = err?.status === 429 || err?.message?.includes('429') || err?.message?.includes('403');
+            if (is429) {
+                console.warn(`[AIQueue] ${provider} hit rate limit. Cooling down for 60s.`);
+                this.history[provider].cooldownUntil = Date.now() + 60000;
             }
-        }
-    }
 
-    _sleep(ms) {
-        return new Promise(resolve => setTimeout(resolve, ms));
+            // Re-enqueue (unshift) to try with another provider in the next process tick
+            this.queue.unshift(item);
+        } finally {
+            setTimeout(() => this._process(), 200);
+        }
     }
 }
 

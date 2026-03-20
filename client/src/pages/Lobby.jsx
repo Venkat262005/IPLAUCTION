@@ -2,7 +2,8 @@ import React, { useState, useEffect } from "react";
 import { useNavigate, useLocation, useParams } from "react-router-dom";
 import { useSocket } from "../context/SocketContext";
 import { useSession } from "../context/SessionContext";
-import { Copy, Check } from "lucide-react";
+import { useVoice } from "../context/VoiceContext";
+import { Copy, Check, Shield, Zap, Users, Telescope, ArrowRight, Play, Layout, Settings, AlertTriangle, LogOut, Share2, Crown, Bot, Phone, PhoneOff, Mic, MicOff, Volume2, VolumeX, X } from "lucide-react";
 import { FaWhatsapp } from "react-icons/fa";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -28,6 +29,7 @@ const Lobby = () => {
   const [selectedTeamId, setSelectedTeamId] = useState("");
   // playerName, userId, and initSession come from the secure session context
   const { playerName, userId, initSession } = useSession();
+  const { isJoined: isVoiceJoined, isMuted: isVoiceMuted, joinVoice, leaveVoice, toggleMute, voiceParticipants } = useVoice();
   const [localNameInput, setLocalNameInput] = useState(playerName || "");
   useEffect(() => {
     if (playerName && !localNameInput) {
@@ -63,12 +65,87 @@ const Lobby = () => {
   const [isDirectJoining, setIsDirectJoining] = useState(false);
   const [isAutoJoining, setIsAutoJoining] = useState(false);
 
+  // New states for Lobby Enhancements
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [tempName, setTempName] = useState("");
+  const [showSettings, setShowSettings] = useState(false);
+  const [localLobbySettings, setLocalLobbySettings] = useState({
+    allowSpectators: true,
+    maxSpectators: 10,
+    teamCount: 15
+  });
+  const [isPendingApproval, setIsPendingApproval] = useState(false);
+
   const { socket, reconnectWithToken } = useSocket();
   const navigate = useNavigate();
   const location = useLocation();
   const { roomCode: urlRoomCode } = useParams();
 
   const [copied, setCopied] = useState(false);
+
+  // Action Handlers
+  const handleCreate = async () => {
+    if (!localNameInput.trim()) return setError("Enter your name first");
+    try {
+      setIsAutoJoining(true);
+      const data = await initSession(localNameInput.trim());
+      // Await the new connected socket to avoid the race condition
+      const freshSocket = await reconnectWithToken(data.token);
+      freshSocket.emit("create_room", { roomType: creatingRoomType });
+    } catch (e) {
+      setError(e.message || 'Failed to start session');
+      setIsAutoJoining(false);
+    }
+  };
+
+  const handleJoin = async (codeToJoin = roomCodeInput, nameOverride = null) => {
+    const finalName = nameOverride || localNameInput;
+    if (!finalName.trim() || !codeToJoin)
+      return setError("Name and Room Code required");
+    try {
+      setIsAutoJoining(true);
+      const data = await initSession(finalName.trim());
+      const freshSocket = await reconnectWithToken(data.token);
+      freshSocket.emit("join_room", { roomCode: codeToJoin });
+    } catch (e) {
+      setError(e.message || 'Failed to start session');
+      setIsAutoJoining(false);
+    }
+  };
+
+  const handleSpectate = async (codeToJoin = roomCodeInput) => {
+    if (!localNameInput.trim() || !codeToJoin)
+      return setError("Name and Room Code required");
+    try {
+      setIsAutoJoining(true);
+      const data = await initSession(localNameInput.trim());
+      const freshSocket = await reconnectWithToken(data.token);
+      freshSocket.emit("join_room", { roomCode: codeToJoin, asSpectator: true });
+    } catch (e) {
+      setError(e.message || 'Failed to start session');
+      setIsAutoJoining(false);
+    }
+  };
+
+  const handleClaimTeam = () => {
+    if (!selectedTeamId) return setError("Select a franchise first");
+    socket.emit("claim_team", {
+      roomCode: roomState?.roomCode,
+      teamId: selectedTeamId
+    });
+  };
+
+  const handleStart = () => {
+    socket.emit("start_auction", { roomCode: roomState.roomCode });
+  };
+
+  const handleRequestAccess = () => {
+    if (!roomCodeInput) return;
+    socket.emit("request_participation", { roomCode: roomCodeInput });
+    setIsPendingApproval(true);
+    setError(""); // Clear error while pending
+  };
+
 
   // Auto-fill room code if joined via standard link
   useEffect(() => {
@@ -119,12 +196,12 @@ const Lobby = () => {
   // Auto-join for returning users (e.g. reopened tab / direct join link with session)
   useEffect(() => {
     if (urlRoomCode && playerName && socket && !isJoined && !isAutoJoining) {
-      // Only trigger if we aren't already in the "Enter Arena" flow manually
-      // and we have a valid session. This saves the user a click.
+      // Direct join for re-hydration (refresh)
+      // We check playerName/socket existence to ensure we are initialized
       console.log("[AUTO-JOIN] Re-identifying for room:", urlRoomCode);
-      handleJoin(urlRoomCode.toUpperCase());
+      handleJoin(urlRoomCode.toUpperCase(), playerName);
     }
-  }, [urlRoomCode, playerName, socket, isJoined, isAutoJoining]);
+  }, [urlRoomCode, playerName, socket, isJoined, isAutoJoining, handleJoin]);
 
   useEffect(() => {
     if (!socket) return;
@@ -133,19 +210,31 @@ const Lobby = () => {
       setRoomState(state);
       setIsJoined(true);
       setError("");
+      // Sync URL for persistence on refresh
+      if (location.pathname !== `/join/${roomCode}`) {
+        navigate(`/join/${roomCode}`, { replace: true });
+      }
     });
 
-    socket.on("room_joined", ({ roomCode, state }) => {
+    socket.on("room_joined", ({ state }) => {
+      const roomCode = state.roomCode;
       setRoomState(state);
       setIsJoined(true);
       setError("");
-      setIsAutoJoining(false); // Reset auto-join state
+      setIsAutoJoining(false); 
       setCoHostUserIds(state.coHostUserIds || []);
+
       // Detect if the current user is a spectator (not a team owner)
       const amSpectator = state.spectators?.some((s) => s.socketId === socket.id);
       setIsSpectatorMode(amSpectator || false);
+
+      // Sync URL for persistence on refresh (if in Lobby state)
+      if (state.status === "Lobby" && location.pathname !== `/join/${roomCode}`) {
+        navigate(`/join/${roomCode}`, { replace: true });
+      }
+
       // If joining a room where the auction is ALREADY live, go straight to the podium
-      if (state.status === "Auctioning") {
+      if (state.status === "Auctioning" || state.status === "Paused") {
         navigate(`/auction/${roomCode}`, {
           state: { roomState: state, isSpectator: amSpectator || false },
         });
@@ -215,6 +304,21 @@ const Lobby = () => {
       setTimerDuration(timerDuration);
     });
 
+    socket.on("lobby_settings_updated", (settings) => {
+      setLocalLobbySettings(settings);
+      setRoomState(prev => prev ? { ...prev, ...settings } : null);
+    });
+
+    socket.on("participation_approved", () => {
+      setIsPendingApproval(false);
+      handleSpectate(roomCodeInput);
+    });
+
+    socket.on("participation_rejected", () => {
+      setIsPendingApproval(false);
+      setError("Your request to spectate was declined by the host.");
+    });
+
     return () => {
       socket.off("room_created");
       socket.off("room_joined");
@@ -243,62 +347,7 @@ const Lobby = () => {
     return () => socket.off("connect", onReconnect);
   }, [socket, roomState?.roomCode, isSpectatorMode]);
 
-  // Reconnection logic is now handled directly by reconnectWithToken
 
-  const handleCreate = async () => {
-    if (!localNameInput.trim()) return setError("Enter your name first");
-    try {
-      setIsAutoJoining(true);
-      const data = await initSession(localNameInput.trim());
-      // Await the new connected socket to avoid the race condition
-      const freshSocket = await reconnectWithToken(data.token);
-      freshSocket.emit("create_room", { roomType: creatingRoomType });
-    } catch (e) {
-      setError(e.message || 'Failed to start session');
-      setIsAutoJoining(false);
-    }
-  };
-
-  const handleJoin = async (codeToJoin = roomCodeInput) => {
-    if (!localNameInput.trim() || !codeToJoin)
-      return setError("Name and Room Code required");
-    try {
-      setIsAutoJoining(true);
-      const data = await initSession(localNameInput.trim());
-      const freshSocket = await reconnectWithToken(data.token);
-      freshSocket.emit("join_room", { roomCode: codeToJoin });
-    } catch (e) {
-      setError(e.message || 'Failed to start session');
-      setIsAutoJoining(false);
-    }
-  };
-
-  const handleSpectate = async (codeToJoin = roomCodeInput) => {
-    if (!localNameInput.trim() || !codeToJoin)
-      return setError("Name and Room Code required");
-    try {
-      setIsAutoJoining(true);
-      const data = await initSession(localNameInput.trim());
-      const freshSocket = await reconnectWithToken(data.token);
-      freshSocket.emit("join_room", { roomCode: codeToJoin, asSpectator: true });
-    } catch (e) {
-      setError(e.message || 'Failed to start session');
-      setIsAutoJoining(false);
-    }
-  };
-
-  const handleClaimTeam = () => {
-    if (!selectedTeamId) return setError("Select a franchise first");
-    // roomCode is determined server-side from the socket's joined rooms
-    socket.emit("claim_team", {
-      roomCode: roomState?.roomCode,
-      teamId: selectedTeamId
-    });
-  };
-
-  const handleStart = () => {
-    socket.emit("start_auction", { roomCode: roomState.roomCode });
-  };
   const handleToggleCoHost = (targetUserId) => {
     socket.emit("toggle_cohost", { roomCode: roomState.roomCode, userId: targetUserId });
   };
@@ -308,6 +357,9 @@ const Lobby = () => {
   };
 
   const confirmLeaveRoom = () => {
+    if (isVoiceJoined && roomState?.roomCode) {
+      leaveVoice(roomState.roomCode);
+    }
     if (roomState?.roomCode) {
       socket.emit("leave_room", { roomCode: roomState.roomCode });
     }
@@ -319,6 +371,22 @@ const Lobby = () => {
     setError("");
     setShowLeaveConfirm(false);
     setIsSpectatorMode(false);
+    setIsEditingName(false);
+    setShowSettings(false);
+  };
+
+  const handleChangeName = () => {
+    if (!tempName.trim()) return;
+    socket.emit("change_owner_name", { roomCode: roomState.roomCode, newName: tempName.trim() });
+    setIsEditingName(false);
+  };
+
+  const handleUpdateLobbySettings = () => {
+    socket.emit("update_lobby_settings", {
+      roomCode: roomState.roomCode,
+      ...localLobbySettings
+    });
+    setShowSettings(false);
   };
 
   const myTeam = roomState?.teams?.find((t) =>
@@ -332,10 +400,13 @@ const Lobby = () => {
   const isHost = isPrimaryHost; // Keep variable name for older UI components if needed
 
   // Use available teams from state if present, otherwise fallback to IPL_TEAMS
-  const displayTeams = availableTeamsForRoom || IPL_TEAMS;
+  // Dynamic Filtering: If teamCount <= 10, only show the first 10 teams (Modern IPL)
+  const currentTeamLimit = roomState?.teamCount || 15;
+  const filteredTeams = currentTeamLimit <= 10 ? IPL_TEAMS.slice(0, 10) : IPL_TEAMS.slice(0, currentTeamLimit);
+  const displayTeams = availableTeamsForRoom || filteredTeams;
 
   return (
-    <div className="h-screen w-screen flex items-center justify-center p-6 relative overflow-hidden">
+    <div className="min-h-screen w-full flex flex-col items-center justify-start p-4 sm:p-6 relative overflow-x-hidden overflow-y-auto custom-scrollbar">
 
       {/* Full-screen video background */}
       <video
@@ -350,617 +421,460 @@ const Lobby = () => {
       <div className="absolute inset-0 bg-black/60 z-[1]" />
 
 
-      <div className="w-full max-w-5xl grid grid-cols-1 lg:grid-cols-2 gap-10 lg:gap-16 items-center relative z-10 py-10 lg:py-0 overflow-y-auto lg:overflow-visible h-full lg:h-auto custom-scrollbar">
-        {/* Brand Side - Conditional: Brand or Rules */}
-        <motion.div
-          initial={{ y: 20, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          className="space-y-10 lg:space-y-12"
-        >
-          <AnimatePresence mode="wait">
-            {!isJoined ? (
-              <motion.div
-                key="brand-content"
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.95 }}
-                className="space-y-8"
-              >
-                <div>
-                  <motion.div
-                    initial={{ scale: 0.8 }}
-                    animate={{ scale: 1 }}
-                    className="bg-white/5 border border-white/10 w-16 h-16 md:w-20 md:h-20 rounded-2xl md:rounded-3xl mb-6 flex items-center justify-center"
-                  >
-                    <svg
-                      width="40"
-                      height="40"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      xmlns="http://www.w3.org/2000/svg"
+      <div className="w-full max-w-6xl relative z-10 px-0 sm:px-6 lg:px-0 py-4 lg:py-10 flex items-center justify-center">
+        <AnimatePresence mode="wait">
+          {!isJoined ? (
+            <motion.div
+              key="entry-arena"
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: -20 }}
+              className="w-full max-w-4xl grid grid-cols-1 lg:grid-cols-12 gap-0 overflow-hidden rounded-3xl lg:rounded-[40px] border border-white/10 shadow-[0_0_100px_rgba(0,0,0,0.5)] bg-black/40 backdrop-blur-3xl"
+            >
+              {/* Sidebar / Info Panel */}
+              <div className="lg:col-span-5 p-6 sm:p-8 lg:p-12 bg-gradient-to-br from-[#D4AF37]/10 via-transparent to-transparent border-b lg:border-b-0 lg:border-r border-white/5 flex flex-col justify-between">
+                <div className="space-y-8">
+                  <div className="space-y-4">
+                    <motion.div
+                      initial={{ rotate: -10, opacity: 0 }}
+                      animate={{ rotate: 0, opacity: 1 }}
+                      className="w-16 h-16 bg-gradient-to-br from-[#FFE58F] to-[#D4AF37] rounded-3xl flex items-center justify-center shadow-[0_0_30px_rgba(212,175,55,0.3)]"
                     >
-                      <path d="M12 2L2 7L12 12L22 7L12 2Z" fill="#00d2ff" />
-                      <path
-                        d="M2 17L12 22L22 17"
-                        stroke="#9333ea"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                      <path
-                        d="M2 12L12 17L22 12"
-                        stroke="#00d2ff"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  </motion.div>
-                  <h1 className="text-4xl sm:text-5xl lg:text-6xl xl:text-7xl font-black italic tracking-tighter leading-none text-white uppercase mb-4">
-                    IPL{" "}
-                    <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#FFE58F] to-[#D4AF37]">
-                      Auction
-                    </span>
-                  </h1>
-                  <p className="text-slate-500 text-base lg:text-lg font-bold leading-relaxed max-w-sm">
-                    Real-time multiplayer bidding arena. Draft your dream XI against
-                    rivals.
-                  </p>
-                </div>
-
-                <div className="flex flex-wrap gap-4">
-                  <div className="px-4 md:px-5 py-2 md:py-3 glass-panel rounded-xl md:rounded-2xl border-white/5 flex items-center gap-3">
-                    <div className="w-2 h-2 rounded-full bg-[#FFE58F] animate-pulse"></div>
-                    <span className="text-[9px] md:text-[10px] font-black uppercase tracking-widest text-[#D4AF37]">
-                      Low Latency Engine
-                    </span>
-                  </div>
-                  <div className="px-4 md:px-5 py-2 md:py-3 glass-panel rounded-xl md:rounded-2xl border-white/5 flex items-center gap-3">
-                    <div className="w-2 h-2 rounded-full bg-[#D4AF37] animate-pulse"></div>
-                    <span className="text-[9px] md:text-[10px] font-black uppercase tracking-widest text-[#D4AF37]">
-                      Gemini AI Ratings
-                    </span>
-                  </div>
-                </div>
-              </motion.div>
-            ) : (
-              <motion.div
-                key="rules-content"
-                initial={{ opacity: 0, x: -20 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -20 }}
-                className="space-y-6"
-              >
-                {/* Rules Section (Now the main content) */}
-                <div className="space-y-2 mb-6">
-                  <h2 className="text-3xl font-black italic tracking-tighter text-white uppercase">
-                    Auction <span className="text-[#FFE58F]">Directives</span>
-                  </h2>
-                  <p className="text-[#D4AF37]/70 text-xs font-bold uppercase tracking-widest">Mandatory Squad Compliance</p>
-                </div>
-
-                <div className="glass-panel p-6 sm:p-8 rounded-[32px] border-[#D4AF37]/20 space-y-6 max-w-md shadow-2xl bg-[#0a0702]/80 backdrop-blur-md">
-                  <ul className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-4">
-                    <li className="flex items-start gap-4">
-                      <div className="w-2 h-2 rounded-full bg-[#FFE58F] mt-2 shrink-0 shadow-[0_0_10px_rgba(255,229,143,0.5)]"></div>
-                      <p className="text-[11px] text-[#D4AF37]/80 font-bold leading-relaxed">
-                        <span className="text-[#FFE58F] uppercase tracking-tighter mr-1 block sm:inline">Squad Size:</span>
-                        Min <span className="text-[#FFE58F]">18</span> — Max <span className="text-[#FFE58F]">25</span>.
-                      </p>
-                    </li>
-                    <li className="flex items-start gap-4">
-                      <div className="w-2 h-2 rounded-full bg-[#D4AF37] mt-2 shrink-0 shadow-[0_0_10px_rgba(212,175,55,0.5)]"></div>
-                      <p className="text-[11px] text-[#D4AF37]/80 font-bold leading-relaxed">
-                        <span className="text-[#FFE58F] uppercase tracking-tighter mr-1 block sm:inline">Overseas:</span>
-                        Max <span className="text-[#FFE58F]">8</span> foreign players.
-                      </p>
-                    </li>
-                    <li className="flex items-start gap-4">
-                      <div className="w-2 h-2 rounded-full bg-[#FFE58F] mt-2 shrink-0 shadow-[0_0_10px_rgba(255,229,143,0.5)]"></div>
-                      <p className="text-[11px] text-[#D4AF37]/80 font-bold leading-relaxed">
-                        <span className="text-[#FFE58F] uppercase tracking-tighter mr-1 block sm:inline">Bowling:</span>
-                        Min <span className="text-[#FFE58F]">6</span> specialist options.
-                      </p>
-                    </li>
-                    <li className="flex items-start gap-4">
-                      <div className="w-2 h-2 rounded-full bg-[#D4AF37] mt-2 shrink-0 shadow-[0_0_10px_rgba(212,175,55,0.5)]"></div>
-                      <p className="text-[11px] text-[#D4AF37]/80 font-bold leading-relaxed">
-                        <span className="text-[#FFE58F] uppercase tracking-tighter mr-1 block sm:inline">Keeping:</span>
-                        Minimum <span className="text-[#FFE58F]">2</span> WK required.
-                      </p>
-                    </li>
-                  </ul>
-
-                  <div className="pt-6 border-t border-[#D4AF37]/20">
-                    <div className="flex items-center gap-2 mb-3">
-                      <span className="text-[9px] font-black text-[#FFE58F] uppercase tracking-[0.2em]">Evaluation Metrics</span>
-                      <div className="h-px flex-1 bg-[#D4AF37]/20"></div>
+                      <Zap className="w-8 h-8 text-[#1a1205] fill-[#1a1205]" />
+                    </motion.div>
+                    <div>
+                      <h1 className="text-4xl md:text-5xl font-black italic tracking-tighter text-white leading-none uppercase">
+                        IPL <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#FFE58F] via-[#D4AF37] to-[#FFE58F] animate-gradient-x">AUCTION</span>
+                      </h1>
+                      <div className="h-1 w-20 bg-[#D4AF37] mt-2 rounded-full"></div>
                     </div>
-                    <p className="text-[11px] text-[#D4AF37]/60 font-medium leading-relaxed">
-                      AI analyzes your <span className="text-[#FFE58F]">11+4 core</span> for T20 viability, <span className="text-[#FFE58F]">Strike Rate</span>, and variety.
+                    <p className="text-slate-400 text-sm font-bold leading-relaxed max-w-xs uppercase tracking-tight">
+                      Command the auction floor. Build your dynasty. Outbid the rest.
                     </p>
                   </div>
 
-                  {/* Disqualification Note */}
-                  <div className="p-4 bg-[#D4AF37]/5 border border-[#D4AF37]/20 rounded-2xl flex items-start gap-3 shadow-[0_0_15px_rgba(212,175,55,0.1)]">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#D4AF37" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="mt-0.5 shrink-0">
-                      <circle cx="12" cy="12" r="10" />
-                      <line x1="12" y1="8" x2="12" y2="12" />
-                      <line x1="12" y1="16" x2="12.01" y2="16" />
-                    </svg>
-                    <p className="text-[10px] text-[#D4AF37] font-black leading-tight uppercase tracking-tight">
-                      Violation results in <span className="text-[#FFE58F] underline decoration-[#D4AF37] underline-offset-2">Immediate Disqualification</span>. No zero rating will be given.
-                    </p>
-                  </div>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </motion.div>
-
-        {/* Interaction Side */}
-        <motion.div
-          initial={{ y: 20, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          className="glass-card rounded-[32px] md:rounded-[40px] p-6 sm:p-8 lg:p-10 border-[#D4AF37]/20 relative bg-[#0a0702]/80 backdrop-blur-xl shadow-2xl"
-        >
-          <AnimatePresence mode="wait">
-            {!isJoined ? (
-              <motion.div
-                key={isDirectJoining ? "direct" : "entry"}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.95 }}
-                className="space-y-6"
-              >
-                {isDirectJoining && (
-                  <div className="text-center space-y-2 mb-8">
-                    <h2 className="text-[10px] font-black text-[#D4AF37] uppercase tracking-[0.3em]">
-                      Direct Invitation
-                    </h2>
-                    <div className="text-4xl font-black text-[#FFE58F] tracking-[0.1em]">
-                      {roomCodeInput}
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-3 p-4 rounded-2xl bg-white/5 border border-white/10 group hover:bg-white/10 transition-all cursor-default">
+                      <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center border border-white/10 text-[#D4AF37]">
+                        <Zap className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="text-[10px] font-black text-white uppercase tracking-widest">Ultra-Low Latency</div>
+                        <div className="text-[9px] font-bold text-slate-500 uppercase tracking-tighter">Real-time Bid Sync</div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3 p-4 rounded-2xl bg-white/5 border border-white/10 group hover:bg-white/10 transition-all cursor-default">
+                      <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center border border-white/10 text-[#00d2ff]">
+                        <Users className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="text-[10px] font-black text-white uppercase tracking-widest">Multiplayer Arena</div>
+                        <div className="text-[9px] font-bold text-slate-500 uppercase tracking-tighter">Up to 10 Global Owners</div>
+                      </div>
                     </div>
                   </div>
-                )}
+                </div>
 
-                <div className="space-y-4">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-[#D4AF37]/70 uppercase tracking-widest ml-1">
-                      {isDirectJoining ? "Identify Yourself" : "The Gaffer's Name"}
-                    </label>
-                    <div className="relative group">
-                      <input
-                        type="text"
-                        placeholder="Enter your name..."
-                        className="w-full bg-[#D4AF37]/5 border border-[#D4AF37]/20 rounded-2xl px-6 py-4 focus:outline-none focus:border-[#D4AF37] text-[#FFE58F] font-bold transition-all placeholder:text-[#D4AF37]/40"
-                        value={localNameInput}
-                        onChange={(e) => setLocalNameInput(e.target.value)}
-                      />
-                      {playerName && playerName === localNameInput && (
-                        <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-3">
-                          <span className="hidden md:inline-block text-[8px] font-black text-[#D4AF37] uppercase tracking-widest bg-[#D4AF37]/10 px-2 py-1 rounded-md border border-[#D4AF37]/20">
-                            Session Active
-                          </span>
-                          <button
-                            onClick={() => {
-                              localStorage.removeItem('ipl_session_token');
-                              window.location.reload();
-                            }}
-                            className="text-[8px] font-black text-[#1a1205] hover:bg-[#FFE58F] uppercase tracking-widest bg-[#D4AF37] px-2 py-1 rounded-md border border-[#D4AF37] transition-colors shadow-lg"
-                            title="Sign out and join as a different player"
-                          >
-                            Not you?
-                          </button>
+                <div className="mt-12 pt-8 border-t border-white/5">
+                  <div className="flex items-center justify-between text-[9px] font-black text-[#D4AF37]/40 uppercase tracking-[0.2em]">
+                    <span>Secure Arena v2.4</span>
+                    <Shield className="w-3 h-3" />
+                  </div>
+                </div>
+              </div>
+
+              {/* Interaction Panel */}
+              <div className="lg:col-span-7 p-6 sm:p-8 lg:p-12 flex flex-col justify-center">
+                <div className="space-y-8">
+                  {/* Name Input Section */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between px-1">
+                      <label className="text-[10px] font-black text-[#D4AF37] uppercase tracking-[0.2em]">Franchise Owner Name</label>
+                      {playerName && (
+                        <div className="flex items-center gap-2">
+                          <span className="text-[8px] font-black text-emerald-400 uppercase bg-emerald-400/10 px-2 py-0.5 rounded border border-emerald-400/20">Session Active</span>
+                          <button onClick={() => { sessionStorage.removeItem('ipl_session_token'); window.location.reload(); }} className="text-[8px] font-black text-slate-500 hover:text-white uppercase transition-colors underline underline-offset-2">Logout</button>
                         </div>
                       )}
                     </div>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        placeholder="e.g. Victorious Gaffer"
+                        className="w-full bg-white/5 border-2 border-white/10 rounded-2xl px-6 py-5 focus:outline-none focus:border-[#D4AF37]/50 text-white font-black text-lg transition-all placeholder:text-white/10"
+                        value={localNameInput}
+                        onChange={(e) => setLocalNameInput(e.target.value)}
+                      />
+                    </div>
                   </div>
 
-                  {!isDirectJoining ? (
-                    <>
-                      <div className="flex flex-wrap gap-2">
-                        <button
-                          onClick={() => setCreatingRoomType("private")}
-                          className={`flex-1 min-w-[120px] py-3 rounded-xl border font-bold text-[10px] tracking-widest uppercase transition-all ${creatingRoomType === "private" ? "bg-[#D4AF37] border-[#FFE58F] text-[#1a1205]" : "bg-[#D4AF37]/5 border-[#D4AF37]/20 text-[#D4AF37]/60 hover:bg-[#D4AF37]/10"}`}
-                        >
-                          Private Room
-                        </button>
-                        <button
-                          onClick={() => setCreatingRoomType("public")}
-                          className={`flex-1 min-w-[120px] py-3 rounded-xl border font-bold text-[10px] tracking-widest uppercase transition-all ${creatingRoomType === "public" ? "bg-[#D4AF37] border-[#FFE58F] text-[#1a1205]" : "bg-[#D4AF37]/5 border-[#D4AF37]/20 text-[#D4AF37]/60 hover:bg-[#D4AF37]/10"}`}
-                        >
-                          Public Room
-                        </button>
-                        <button
-                          onClick={() => setCreatingRoomType("ai")}
-                          className={`flex-1 min-w-[120px] py-3 rounded-xl border font-bold text-[10px] tracking-widest uppercase transition-all ${creatingRoomType === "ai" ? "bg-[#D4AF37] border-[#FFE58F] text-[#1a1205]" : "bg-[#D4AF37]/5 border-[#D4AF37]/20 text-[#D4AF37]/60 hover:bg-[#D4AF37]/10"}`}
-                        >
-                          🤖 Play with AI
+                  {/* Action Tabs */}
+                  <div className="space-y-6">
+                    {!isDirectJoining ? (
+                      <div className="space-y-6">
+                        <div className="flex p-1.5 bg-white/5 rounded-2xl border border-white/10">
+                          <button onClick={() => setCreatingRoomType("private")} className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${creatingRoomType === "private" ? "bg-[#D4AF37] text-[#1a1205] shadow-[0_0_20px_rgba(212,175,55,0.3)]" : "text-slate-500 hover:text-white"}`}>
+                            <Shield className="w-3.5 h-3.5" /> Private
+                          </button>
+                          <button onClick={() => setCreatingRoomType("public")} className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${creatingRoomType === "public" ? "bg-[#D4AF37] text-[#1a1205] shadow-[0_0_20px_rgba(212,175,55,0.3)]" : "text-slate-500 hover:text-white"}`}>
+                            <Users className="w-3.5 h-3.5" /> Public
+                          </button>
+                          <button onClick={() => setCreatingRoomType("ai")} className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${creatingRoomType === "ai" ? "bg-[#D4AF37] text-[#1a1205] shadow-[0_0_20px_rgba(212,175,55,0.3)]" : "text-slate-500 hover:text-white"}`}>
+                            🤖 VS AI
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <button onClick={handleCreate} className="group relative overflow-hidden bg-white/10 hover:bg-white text-white hover:text-black font-black py-5 rounded-3xl transition-all duration-500 flex items-center justify-center gap-3">
+                            <span className="relative z-10 text-xs tracking-[0.2em] uppercase">Commission Round</span>
+                            <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform relative z-10" />
+                            <div className="absolute inset-0 bg-gradient-to-r from-[#D4AF37] to-[#FFE58F] opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                          </button>
+
+                          <div className="relative group">
+                            <input
+                              type="text"
+                              placeholder="ROOM CODE"
+                              className="w-full bg-transparent border-2 border-white/10 rounded-3xl px-6 py-5 text-center text-white font-black tracking-[0.4em] focus:outline-none focus:border-[#D4AF37]/50 uppercase transition-all"
+                              value={roomCodeInput}
+                              onChange={(e) => setRoomCodeInput(e.target.value.toUpperCase())}
+                            />
+                            {roomCodeInput.length >= 6 && (
+                              <motion.button
+                                initial={{ opacity: 0, x: 10 }}
+                                animate={{ opacity: 1, x: 0 }}
+                                onClick={() => handleJoin(roomCodeInput)}
+                                className="absolute right-3 top-1/2 -translate-y-1/2 bg-[#D4AF37] text-[#1a1205] p-3 rounded-2xl hover:scale-105 transition-transform"
+                              >
+                                <Play className="w-4 h-4 fill-current" />
+                              </motion.button>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-4">
+                          <button onClick={() => navigate("/public-rooms")} className="flex-1 flex items-center justify-center gap-2 py-4 rounded-3xl bg-white/5 border border-white/5 text-[10px] font-black text-slate-400 hover:text-[#D4AF37] hover:border-[#D4AF37]/30 hover:bg-[#D4AF37]/5 transition-all uppercase tracking-widest">
+                            <Telescope className="w-4 h-4" /> Explore Public Arenas
+                          </button>
+                          <button onClick={() => handleSpectate(roomCodeInput)} className="px-6 py-4 rounded-3xl bg-white/5 border border-white/5 text-[10px] font-black text-slate-400 hover:text-white transition-all uppercase tracking-widest">
+                            Spectate
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-6">
+                        <div className="text-center p-8 rounded-[32px] bg-[#D4AF37]/5 border border-[#D4AF37]/20 relative overflow-hidden group">
+                          <div className="absolute top-0 right-0 w-32 h-32 bg-[#D4AF37]/10 blur-[60px] rounded-full -translate-y-1/2 translate-x-1/2 group-hover:bg-[#D4AF37]/20 transition-all"></div>
+                          <h2 className="text-[10px] font-black text-[#D4AF37] uppercase tracking-[0.4em] mb-2">Direct Invitation</h2>
+                          <div className="text-4xl sm:text-6xl font-black text-white tracking-widest mb-6 drop-shadow-2xl">{roomCodeInput}</div>
+                          <div className="flex flex-col gap-3">
+                            <button onClick={() => handleJoin(roomCodeInput)} className="w-full bg-[#D4AF37] hover:bg-[#FFE58F] text-[#1a1205] font-black py-5 rounded-2xl transition-all uppercase text-[12px] tracking-widest shadow-[0_0_30px_rgba(212,175,55,0.3)]">Enter Arena</button>
+                            <button onClick={() => handleSpectate(roomCodeInput)} className="w-full bg-white/5 hover:bg-white/10 text-white font-black py-4 rounded-2xl transition-all uppercase text-[10px] tracking-widest border border-white/10">Observe Only</button>
+                          </div>
+                        </div>
+                        <button onClick={() => { setIsDirectJoining(false); navigate("/", { replace: true }); }} className="w-full text-center text-[10px] font-black text-slate-500 hover:text-[#D4AF37] uppercase tracking-widest transition-colors flex items-center justify-center gap-2">
+                          <ArrowRight className="w-3.5 h-3.5 rotate-180" /> Back to Terminal
                         </button>
                       </div>
-                      <button
-                        onClick={handleCreate}
-                        className="w-full btn-premium py-4 mt-2"
-                      >
-                        CREATE {creatingRoomType.toUpperCase()} ROOM
-                      </button>
-
-                      <div className="flex items-center gap-4 my-6">
-                        <div className="h-px bg-[#D4AF37]/20 flex-1"></div>
-                        <span className="text-[10px] font-black text-[#D4AF37]/50 uppercase tracking-widest">
-                          OR JOIN EXISTING
-                        </span>
-                        <div className="h-px bg-[#D4AF37]/20 flex-1"></div>
-                      </div>
-
-                      <div className="flex flex-col sm:flex-row gap-2">
-                        <input
-                          type="text"
-                          placeholder="Enter Room Code"
-                          className="w-full sm:w-2/3 bg-[#D4AF37]/5 border border-[#D4AF37]/20 rounded-2xl px-4 py-4 text-center text-[#FFE58F] font-black tracking-[0.2em] focus:outline-none focus:border-[#D4AF37] uppercase"
-                          value={roomCodeInput}
-                          onChange={(e) =>
-                            setRoomCodeInput(e.target.value.toUpperCase())
-                          }
-                        />
-                        <button
-                          onClick={() => handleJoin(roomCodeInput)}
-                          className="w-full sm:flex-1 bg-[#D4AF37] hover:bg-[#FFE58F] text-[#1a1205] font-black py-4 rounded-2xl transition-all uppercase text-[10px] tracking-wider shadow-[0_0_20px_rgba(212,175,55,0.4)]"
-                        >
-                          JOIN
-                        </button>
-                        <button
-                          onClick={() => handleSpectate(roomCodeInput)}
-                          className="w-full sm:flex-1 bg-[#D4AF37]/10 hover:bg-[#D4AF37]/30 border border-[#D4AF37]/30 text-[#FFE58F] hover:text-[#FFF3B0] font-black py-4 rounded-2xl transition-all uppercase text-[10px] tracking-wider"
-                        >
-                          👁 SPECTATE
-                        </button>
-                      </div>
-                    </>
-                  ) : (
-                    <div className="flex flex-col gap-3">
-                      <button
-                        onClick={() => handleJoin(roomCodeInput)}
-                        disabled={isAutoJoining}
-                        className="w-full bg-[#D4AF37] hover:bg-[#FFE58F] text-[#1a1205] font-black py-5 rounded-2xl transition-all uppercase text-[12px] tracking-widest shadow-[0_0_20px_rgba(212,175,55,0.4)] disabled:opacity-50"
-                      >
-                        {isAutoJoining ? "JOINING..." : `ENTER ARENA "${roomCodeInput}"`}
-                      </button>
-                      <button
-                        onClick={() => handleSpectate(roomCodeInput)}
-                        disabled={isAutoJoining}
-                        className="w-full bg-[#D4AF37]/10 hover:bg-[#D4AF37]/30 border border-[#D4AF37]/30 text-[#FFE58F] hover:text-[#FFF3B0] font-black py-4 rounded-2xl transition-all uppercase text-[10px] tracking-wider disabled:opacity-50"
-                      >
-                        👁 SPECTATE ONLY
-                      </button>
-
-                      <button
-                        onClick={() => {
-                          setIsDirectJoining(false);
-                          navigate("/", { replace: true });
-                        }}
-                        className="text-[10px] font-black text-[#D4AF37]/60 hover:text-[#FFE58F] uppercase tracking-[0.2em] transition-colors mt-4"
-                      >
-                        ← Back to Main Lobby
-                      </button>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
 
                 {error && (
-                  <p className="text-[#D4AF37] text-[10px] font-black uppercase tracking-widest text-center mt-2 bg-[#D4AF37]/10 py-2 border border-[#D4AF37]/20 rounded-md">
-                    {error}
-                  </p>
-                )}
-
-                {!isDirectJoining && (
-                  <div className="mt-8 pt-6 border-t border-[#D4AF37]/20">
-                    <button
-                      onClick={() => navigate("/public-rooms")}
-                      className="w-full flex items-center justify-between p-4 bg-[#D4AF37]/5 hover:bg-[#D4AF37]/10 border border-[#D4AF37]/20 rounded-2xl transition-all group shadow-inner"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="w-2 h-2 rounded-full bg-[#FFE58F] animate-pulse shadow-[0_0_10px_#FFE58F]"></div>
-                        <span className="text-[10px] font-black text-[#FFE58F] uppercase tracking-[0.2em] group-hover:text-[#FFF3B0] transition-colors">
-                          Explore Public Caucuses
-                        </span>
-                      </div>
-                      <svg
-                        className="w-5 h-5 text-[#D4AF37] transform -rotate-90 group-hover:translate-x-1 transition-transform"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
+                  <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="mt-8 p-6 rounded-[32px] bg-red-500/10 border border-red-500/20 space-y-4">
+                    <div className="flex items-center gap-3">
+                      <AlertTriangle className="w-5 h-5 text-red-500" />
+                      <p className="text-[10px] text-red-400 font-black uppercase tracking-widest">
+                        {error === 'SPECTATOR_APPROVAL_REQUIRED' ? "Auction in Progress: Host Approval Required" : 
+                         error === 'PLAYER_JOIN_DISABLED' ? "Auction has already started. New participants cannot join." : error}
+                      </p>
+                    </div>
+                    {error === 'SPECTATOR_APPROVAL_REQUIRED' && !isPendingApproval && (
+                      <button 
+                        onClick={handleRequestAccess}
+                        className="w-full py-4 rounded-2xl bg-white/10 hover:bg-white/20 text-white text-[10px] font-black uppercase tracking-widest transition-all border border-white/10"
                       >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth="2"
-                          d="M19 9l-7 7-7-7"
-                        />
-                      </svg>
-                    </button>
-                  </div>
-                )}
-              </motion.div>
-            ) : (
-              <motion.div
-                key="lobby"
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                className="space-y-8 relative"
-              >
-                {/* Back / Leave Room Button */}
-                <button
-                  onClick={handleLeaveRoom}
-                  className="absolute -top-2 -left-2 md:-top-6 md:-left-6 text-[#D4AF37]/60 hover:text-[#FFE58F] bg-[#D4AF37]/5 hover:bg-[#D4AF37]/10 border border-[#D4AF37]/20 p-2 md:p-3 rounded-full transition-all group z-20"
-                  title="Leave Room & Return to Lobby"
-                >
-                  <svg
-                    className="w-4 h-4 md:w-5 md:h-5 transform group-hover:-translate-x-1 transition-transform"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth="2"
-                      d="M10 19l-7-7m0 0l7-7m-7 7h18"
-                    />
-                  </svg>
-                </button>
-
-                <div className="text-center pt-2 relative">
-                  <h2 className="text-[10px] font-black text-[#D4AF37]/60 uppercase tracking-[0.3em] mb-2 mt-4 md:mt-0">
-                    Room Assigned
-                  </h2>
-                  <div className="flex items-center justify-center gap-3">
-                    <div className="text-5xl font-black text-[#FFE58F] tracking-[0.1em]">
-                      {roomState.roomCode}
-                    </div>
-                    <button
-                      onClick={handleCopyLink}
-                      className="p-2 bg-[#D4AF37]/5 hover:bg-[#D4AF37]/10 border border-[#D4AF37]/20 rounded-xl text-[#D4AF37]/70 hover:text-[#FFE58F] transition-all focus:outline-none"
-                      title="Copy Join Link"
-                    >
-                      {copied ? <Check className="w-5 h-5 text-[#FFE58F]" /> : <Copy className="w-5 h-5" />}
-                    </button>
-                    <button
-                      onClick={handleShareWhatsapp}
-                      className="p-2 bg-[#D4AF37]/10 hover:bg-[#D4AF37]/20 border border-[#D4AF37]/20 rounded-xl text-[#D4AF37] hover:text-[#FFE58F] transition-all focus:outline-none"
-                      title="Share via WhatsApp"
-                    >
-                      <FaWhatsapp className="w-5 h-5" />
-                    </button>
-                  </div>
-                </div>
-
-                {isSpectatorMode ? (
-                  /* Spectator waiting panel — no franchise selection */
-                  <div className="space-y-4 bg-[#D4AF37]/5 border border-[#D4AF37]/20 p-6 rounded-3xl text-center">
-                    <div className="w-14 h-14 rounded-full bg-[#D4AF37]/10 flex items-center justify-center mx-auto">
-                      <svg className="w-7 h-7 text-[#FFE58F]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                      </svg>
-                    </div>
-                    <div>
-                      <p className="text-[#FFE58F] font-black uppercase tracking-widest text-xs mb-1">Spectator Mode</p>
-                      <p className="text-[#D4AF37]/70 text-[11px] font-medium">
-                        You're watching this auction as a spectator. You cannot claim a franchise or bid.<br />
-                        Once the auction starts, you can request the host to participate.
-                      </p>
-                    </div>
-                    <button
-                      onClick={() => setShowLeaveConfirm(true)}
-                      className="mt-2 px-5 py-2.5 rounded-xl bg-[#D4AF37]/10 border border-[#D4AF37]/20 text-[#D4AF37] hover:bg-[#FFE58F] hover:text-[#1a1205] transition-all text-[10px] font-black uppercase tracking-widest"
-                    >
-                      Leave Room
-                    </button>
-                  </div>
-                ) : !hasClaimedTeam ? (
-                  <div className="space-y-4 bg-[#D4AF37]/5 p-4 rounded-3xl border border-[#D4AF37]/20">
-                    <h3 className="text-[10px] font-black text-[#FFE58F] uppercase tracking-widest text-center">
-                      Step 2: Claim Your Franchise
-                    </h3>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 max-h-48 overflow-y-auto custom-scrollbar pr-2">
-                      {IPL_TEAMS.map((team) => {
-                        const tId = team.id;
-                        // Check if team is already claimed by anyone in the room
-                        const isClaimed = roomState?.teams?.some((t) => {
-                          // roomState.teams has teamName, franchisdId.
-                          // Because franchise IDs sometimes mismatch shortNames depending on DB, matching by name is safer.
-                          return t.teamName === team.name;
-                        });
-
-                        return (
-                          <button
-                            key={tId}
-                            onClick={() => {
-                              if (!isClaimed) setSelectedTeamId(tId);
-                            }}
-                            disabled={isClaimed}
-                            className={`p-2 rounded-xl border text-[9px] font-black tracking-wider uppercase transition-all flex flex-col items-center justify-center gap-2 relative overflow-hidden
-                                                            ${isClaimed
-                                ? "bg-[#0a0702]/80 border-[#D4AF37]/20 opacity-50 cursor-not-allowed grayscale"
-                                : selectedTeamId ===
-                                  tId
-                                  ? "bg-[#D4AF37]/90 border-[#FFE58F] shadow-[0_0_15px_rgba(212,175,55,0.4)] scale-105 z-10 text-[#1a1205]"
-                                  : "bg-[#D4AF37]/5 border-[#D4AF37]/10 hover:bg-[#D4AF37]/20 text-[#D4AF37]/80"
-                              }`}
-                          >
-                            {isClaimed && (
-                              <div className="absolute inset-0 bg-[#0a0702]/60 flex items-center justify-center backdrop-blur-[1px] z-20">
-                                <span className="bg-[#1a1205] text-[#D4AF37] border border-[#D4AF37]/50 text-[8px] px-2 py-0.5 rounded shadow-lg transform -rotate-12">
-                                  CLAIMED
-                                </span>
-                              </div>
-                            )}
-                            <img
-                              src={team.logoUrl}
-                              alt={tId}
-                              className={`w-10 h-10 object-contain drop-shadow-lg ${isClaimed ? "opacity-40" : ""}`}
-                            />
-                            <span
-                              className={`truncate w-full text-center ${isClaimed ? "text-[#D4AF37]/40 line-through" : selectedTeamId === tId ? "text-[#1a1205]" : "text-[#D4AF37]"}`}
-                            >
-                              {tId}
-                            </span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                    <button
-                      onClick={handleClaimTeam}
-                      className="w-full bg-[#D4AF37] text-[#1a1205] font-black py-3 rounded-xl hover:bg-[#FFE58F] transition-all uppercase tracking-widest text-[10px] mt-2 shadow-[0_0_15px_rgba(212,175,55,0.4)]"
-                    >
-                      SECURE FRANCHISE
-                    </button>
-                    {error && (
-                      <p className="text-[#D4AF37] text-[10px] font-black uppercase tracking-widest text-center">
-                        {error}
-                      </p>
+                        Send Spectator Request
+                      </button>
                     )}
-                  </div>
-                ) : (
-                  <div className="space-y-4">
-                    <h3 className="text-[10px] font-black text-[#D4AF37]/60 uppercase tracking-widest ml-1">
-                      Connected Owners
-                    </h3>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[250px] overflow-y-auto custom-scrollbar pr-2">
-                      {roomState.teams.map((t, i) => (
-                        <div
-                          key={i}
-                          className="glass-panel p-4 rounded-2xl border-[#D4AF37]/20 flex items-center gap-3 relative"
-                        >
-                          <div
-                            className="w-1.5 h-6 rounded-full"
-                            style={{ backgroundColor: t.teamThemeColor }}
-                          ></div>
+                  </motion.div>
+                )}
 
-                          {t.teamLogo ? (
-                            <div className="w-8 h-8 rounded-full bg-[#0a0702] flex items-center justify-center p-1 border border-[#D4AF37]/20 shrink-0">
-                              <img
-                                src={t.teamLogo}
-                                alt={t.teamName}
-                                className="w-full h-full object-contain"
-                              />
-                            </div>
-                          ) : (
-                            <div className="w-8 h-8 rounded-full bg-[#0a0702] flex items-center justify-center shrink-0 border border-[#D4AF37]/20">
-                              <span className="text-[10px] font-black text-[#FFE58F]">
-                                {(t.teamName || '?').charAt(0)}
-                              </span>
-                            </div>
-                          )}
+                {isPendingApproval && (
+                  <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="mt-8 p-6 rounded-[32px] bg-[#D4AF37]/5 border border-[#D4AF37]/20 flex flex-col items-center gap-4 text-center">
+                    <div className="w-12 h-12 rounded-full border-2 border-[#D4AF37]/30 border-t-[#D4AF37] animate-spin" />
+                    <div>
+                      <p className="text-[10px] text-[#D4AF37] font-black uppercase tracking-widest">Awaiting Host Clearance</p>
+                      <p className="text-[9px] text-slate-500 font-bold uppercase mt-1">Your request to spectate is currently pending...</p>
+                    </div>
+                  </motion.div>
+                )}
+              </div>
+            </motion.div>
+          ) : (
+            <motion.div
+              key="arena-dashboard"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 1.05 }}
+              className="w-full max-w-5xl grid grid-cols-1 lg:grid-cols-12 gap-6"
+            >
+              {/* Left Column: Rules & Status */}
+              <div className="lg:col-span-4 space-y-6">
+                <div className="glass-panel p-6 sm:p-8 rounded-3xl lg:rounded-[40px] border-white/10 bg-black/40 backdrop-blur-3xl relative overflow-hidden group">
+                  <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-[#FFE58F] to-[#D4AF37]"></div>
+                  <div className="space-y-6">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-[#D4AF37]/10 flex items-center justify-center border border-[#D4AF37]/20">
+                        <Shield className="w-5 h-5 text-[#D4AF37]" />
+                      </div>
+                      <div>
+                        <h2 className="text-xs font-black text-white uppercase tracking-widest leading-none">Auction Directives</h2>
+                        <span className="text-[8px] font-bold text-[#D4AF37]/60 uppercase tracking-tighter">System Version 4.0.1</span>
+                      </div>
+                    </div>
 
-                          <div className="flex-1 overflow-hidden pr-4">
-                            <div className="text-[9px] font-black text-[#FFE58F] uppercase truncate">
-                              {t.teamName}
-                            </div>
-                            <div className="text-[10px] text-[#D4AF37]/80 font-bold truncate flex items-center gap-1.5">
-                              {/* Online status dot */}
-                              <span
-                                className={`w-1.5 h-1.5 rounded-full shrink-0 ${onlineMap[t.ownerUserId] === false
-                                  ? "bg-[#FF4C4C]"
-                                  : "bg-[#FFE58F]"
-                                  }`}
-                                title={onlineMap[t.ownerUserId] === false ? "Offline" : "Online"}
-                              />
-                              {t.ownerName}{" "}
-                              {t.isBot && <span className="text-[8px] bg-sky-500/20 text-sky-400 px-1.5 py-0.5 rounded uppercase border border-sky-500/30">Bot</span>}
-                              {t.ownerUserId === roomState?.hostUserId ? "(Host)" : coHostUserIds.includes(t.ownerUserId) ? "(Co-Host)" : ""}
-                            </div>
-                          </div>
-
-                          <div className="flex items-center gap-2 pr-2">
-                            {isPrimaryHost && t.ownerUserId !== userId && (
-                              <button
-                                onClick={() => handleToggleCoHost(t.ownerUserId)}
-                                className={`px-2 py-1 rounded-md text-[8px] font-black uppercase tracking-widest border transition-all ${coHostUserIds.includes(t.ownerUserId)
-                                  ? "bg-[#FFE58F] text-[#1a1205] border-[#FFE58F]"
-                                  : "bg-transparent text-[#D4AF37]/60 border-[#D4AF37]/20 hover:bg-[#D4AF37]/10"
-                                  }`}
-                                title={coHostUserIds.includes(t.ownerUserId) ? "Remove Co-Host" : "Make Co-Host"}
-                              >
-                                {coHostUserIds.includes(t.ownerUserId) ? "Co-Host" : "+ Co-Host"}
-                              </button>
-                            )}
-
-                            {isModerator && t.ownerSocketId !== socket.id && (
-                              <button
-                                onClick={() =>
-                                  setKickTarget({
-                                    socketId: t.ownerSocketId,
-                                    name: t.ownerName,
-                                  })
-                                }
-                                className="text-[#D4AF37]/60 hover:text-[#FF4C4C] bg-[#0a0702]/50 hover:bg-[#FF4C4C]/20 w-6 h-6 rounded-full flex items-center justify-center transition-all"
-                                title="Kick Player"
-                              >
-                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                                  <line x1="18" y1="6" x2="6" y2="18"></line>
-                                  <line x1="6" y1="6" x2="18" y2="18"></line>
-                                </svg>
-                              </button>
-                            )}
+                    <div className="space-y-4 pt-4">
+                      {[
+                        { label: 'Squad Size', value: '18 — 25 Players', icon: Users },
+                        { label: 'Overseas', value: 'Max 8 Players', icon: Telescope },
+                        { label: 'Bowling', value: 'Min 6 Options', icon: Zap },
+                        { label: 'Keeping', value: 'Min 2 Options', icon: Shield },
+                      ].map((rule, idx) => (
+                        <div key={idx} className="flex items-center gap-3">
+                          <div className="w-1.5 h-1.5 rounded-full bg-[#D4AF37] shadow-[0_0_8px_#D4AF37]"></div>
+                          <div className="flex-1">
+                            <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest block leading-none mb-1">{rule.label}</span>
+                            <span className="text-[11px] font-bold text-[#FFE58F] uppercase tracking-tighter">{rule.value}</span>
                           </div>
                         </div>
                       ))}
                     </div>
 
-                    {/* Pending Requests for Host */}
-                    {isHost &&
-                      joinRequests.length > 0 && (
-                        <div className="mt-8 space-y-4">
-                          <h3 className="text-[10px] font-black text-[#D4AF37] uppercase tracking-widest ml-1 animate-pulse flex items-center gap-2">
-                            <div className="w-2 h-2 rounded-full bg-[#FFE58F] blur-[2px]"></div>
-                            Pending Join Requests ({joinRequests.length})
+                    <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-2xl">
+                      <p className="text-[9px] text-red-400 font-black leading-tight uppercase tracking-tight">
+                        <span className="text-red-500">Warning:</span> Violation results in immediate disqualification.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Host Controls Section */}
+                {isModerator && (
+                  <div className="glass-panel p-6 rounded-[32px] border-white/10 bg-black/20 flex flex-col gap-4">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[9px] font-black text-white/40 uppercase tracking-widest">Host Controls</span>
+                      <button 
+                        onClick={() => {
+                          setLocalLobbySettings({
+                            allowSpectators: roomState?.allowSpectators !== false,
+                            maxSpectators: roomState?.maxSpectators || 10,
+                            teamCount: roomState?.teamCount || 15
+                          });
+                          setShowSettings(true);
+                        }}
+                        className="p-1.5 hover:bg-white/5 rounded-lg transition-colors text-white/40 hover:text-[#D4AF37]"
+                      >
+                        <Settings className="w-4 h-4" />
+                      </button>
+                    </div>
+                    <button onClick={handleStart} className="w-full group relative overflow-hidden bg-[#D4AF37] text-[#1a1205] font-black py-4 rounded-2xl transition-all shadow-[0_0_30px_rgba(212,175,55,0.2)] hover:shadow-[0_0_40px_rgba(212,175,55,0.4)]">
+                      <span className="relative z-10 text-[10px] tracking-[0.2em] uppercase">Initialize Auction</span>
+                      <div className="absolute inset-0 bg-gradient-to-r from-white/0 via-white/20 to-white/0 -translate-x-full group-hover:translate-x-full transition-transform duration-1000"></div>
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Right Column: Arena Controls */}
+              <div className="lg:col-span-8 space-y-6">
+                {/* Room Status Header */}
+                <div className="glass-panel p-4 sm:p-6 rounded-[32px] border-white/10 bg-black/40 backdrop-blur-3xl flex flex-col sm:flex-row items-center justify-between gap-4">
+                  <div className="flex items-center gap-6">
+                    <div>
+                      <span className="text-[8px] font-black text-slate-500 uppercase tracking-[0.3em] block mb-1">Assigned Terminal</span>
+                      <div className="text-3xl font-black text-white tracking-[0.2em]">{roomState?.roomCode}</div>
+                    </div>
+                    <div className="h-10 w-px bg-white/10"></div>
+                    <div className="flex gap-2">
+                      <button onClick={handleCopyLink} className="p-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-[#D4AF37] transition-all" title="Copy Arena Link">
+                        {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                      </button>
+                      <button onClick={handleShareWhatsapp} className="p-3 bg-white/5 hover:bg-emerald-500/20 border border-white/10 rounded-xl text-emerald-400 transition-all" title="Dispatch to Squad">
+                        <Share2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                  <button onClick={handleLeaveRoom} className="px-5 py-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-[10px] font-black uppercase tracking-widest hover:bg-red-500 hover:text-white transition-all flex items-center gap-2">
+                    <LogOut className="w-3.5 h-3.5" /> Abort
+                  </button>
+                </div>
+                
+                {/* Lobby Voice Controls */}
+                <div className="flex items-center gap-2 mb-6">
+                  {!isVoiceJoined ? (
+                    <button
+                      onClick={() => joinVoice(roomState?.roomCode)}
+                      className="p-3 bg-[#D4AF37]/10 border border-[#D4AF37]/30 text-[#D4AF37] rounded-xl hover:bg-[#D4AF37]/20 transition-all flex items-center justify-center shadow-lg"
+                      title="Join Voice Chat"
+                    >
+                      <Phone className="w-5 h-5" />
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-2 bg-white/5 p-1.5 rounded-2xl border border-white/10">
+                      <button
+                        onClick={toggleMute}
+                        className={`p-3 rounded-xl border transition-all flex items-center justify-center ${isVoiceMuted ? 'bg-red-500/10 border-red-500/30 text-red-500' : 'bg-sky-500 border-sky-400 text-[#080400] animate-pulse shadow-[0_0_20px_rgba(14,165,233,0.5)]'}`}
+                        title={isVoiceMuted ? "Unmute Microphone" : "Mute Microphone"}
+                      >
+                        {isVoiceMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
+                      </button>
+                      <button
+                        onClick={() => leaveVoice(roomState?.roomCode)}
+                        className="p-3 rounded-xl bg-red-500 border border-red-400 text-white shadow-[0_0_15px_rgba(239,68,68,0.3)] hover:bg-red-600 transition-all flex items-center justify-center"
+                        title="Exit Voice Chat"
+                      >
+                        <Phone className="w-5 h-5" />
+                      </button>
+                      <div className="px-3 py-1.5 bg-sky-500/5 rounded-xl border border-sky-500/10 flex items-center gap-2">
+                        <div className="w-1.5 h-1.5 rounded-full bg-sky-500 animate-pulse shadow-[0_0_8px_#38bdf8]"></div>
+                        <span className="text-[9px] font-black text-sky-500 uppercase tracking-widest">Voice Active</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Main Content Area */}
+                {isSpectatorMode ? (
+                  <div className="glass-panel p-12 rounded-[40px] border-white/10 bg-black/40 backdrop-blur-3xl text-center space-y-6">
+                    <div className="w-20 h-20 rounded-full bg-[#D4AF37]/10 flex items-center justify-center mx-auto border border-[#D4AF37]/20">
+                      <Telescope className="w-10 h-10 text-[#D4AF37]" />
+                    </div>
+                    <div className="space-y-2">
+                      <h3 className="text-xl font-black text-white uppercase tracking-widest">Observer Status</h3>
+                      <p className="text-slate-500 text-sm font-bold uppercase tracking-tight">You are currently monitoring the auction terminal.</p>
+                    </div>
+                    <div className="pt-4">
+                      <span className="inline-block px-4 py-2 rounded-full bg-white/5 border border-white/10 text-[10px] font-black text-[#D4AF37] uppercase tracking-widest animate-pulse">Waiting for host to initiate loop...</span>
+                    </div>
+                  </div>
+                ) : !hasClaimedTeam ? (
+                  <div className="glass-panel p-6 sm:p-8 rounded-3xl lg:rounded-[40px] border-white/10 bg-black/40 backdrop-blur-3xl space-y-8">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-xs font-black text-[#D4AF37] uppercase tracking-[0.3em]">Franchise Acquisition</h3>
+                      <span className="text-[10px] font-bold text-slate-500 uppercase">Step 02 / 03</span>
+                    </div>
+
+                    <div className="grid grid-cols-3 xs:grid-cols-4 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-3 max-h-[400px] overflow-y-auto custom-scrollbar pr-2">
+                      {displayTeams.map((team) => {
+                        const isClaimed = roomState?.teams?.some((t) => t.teamName === team.name);
+                        const isSelected = selectedTeamId === team.id;
+
+                        return (
+                          <motion.button
+                            key={team.id}
+                            whileHover={!isClaimed ? { scale: 1.05, y: -5 } : {}}
+                            whileTap={!isClaimed ? { scale: 0.95 } : {}}
+                            onClick={() => !isClaimed && setSelectedTeamId(team.id)}
+                            className={`relative aspect-square rounded-2xl border transition-all flex flex-col items-center justify-center p-4 overflow-hidden group ${isClaimed ? 'bg-black/40 border-white/5 opacity-40 grayscale cursor-not-allowed' : isSelected ? 'bg-white/10 border-[#D4AF37] shadow-[0_0_30px_rgba(212,175,55,0.2)]' : 'bg-white/5 border-white/10 hover:border-white/20'}`}
+                          >
+                            {!isClaimed && isSelected && (
+                              <motion.div layoutId="selection-glow" className="absolute inset-0 bg-gradient-to-br from-[#D4AF37]/20 to-transparent"></motion.div>
+                            )}
+                            <img src={team.logoUrl} alt={team.id} className="w-12 h-12 object-contain relative z-10 drop-shadow-2xl transition-transform duration-500 group-hover:scale-110" />
+                            <span className={`text-[9px] font-black uppercase tracking-widest mt-3 relative z-10 ${isSelected ? 'text-[#D4AF37]' : 'text-slate-500'}`}>{team.id}</span>
+                            {isClaimed && <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-[1px] z-20"><span className="text-[8px] font-black text-[#D4AF37] uppercase tracking-tighter border border-[#D4AF37]/50 px-2 py-0.5 rounded -rotate-12">Claimed</span></div>}
+                          </motion.button>
+                        );
+                      })}
+                    </div>
+
+                    <button onClick={handleClaimTeam} className="w-full bg-[#D4AF37] hover:bg-[#FFE58F] text-[#1a1205] font-black py-5 rounded-[24px] transition-all uppercase text-[12px] tracking-widest shadow-[0_0_30px_rgba(212,175,55,0.2)]">Confirm Acquisition</button>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {/* Participant List */}
+                    <div className="glass-panel p-6 sm:p-8 rounded-3xl lg:rounded-[40px] border-white/10 bg-black/40 backdrop-blur-3xl space-y-6 flex flex-col lg:h-[500px] h-auto min-h-[300px]">
+                      <h3 className="text-xs font-black text-[#D4AF37] uppercase tracking-[0.3em]">Committed Owners</h3>
+                      <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 space-y-3">
+                        {roomState?.teams?.map((t, idx) => (
+                          <div key={idx} className="flex items-center gap-4 p-4 rounded-2xl bg-white/5 border border-white/5 hover:bg-white/10 transition-all relative group">
+                            <div className="w-10 h-10 rounded-xl bg-black/40 border border-white/10 flex items-center justify-center p-1.5 shrink-0 overflow-hidden">
+                              {t.teamLogo ? <img src={t.teamLogo} alt="" className="w-full h-full object-contain" /> : <div className="text-xs font-black text-[#D4AF37]">{(t.teamName || '?').charAt(0)}</div>}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-[10px] font-black text-white uppercase truncate">{t.teamName}</div>
+                              <div className="flex items-center gap-2">
+                                <span className={`w-1.5 h-1.5 rounded-full ${onlineMap[t.ownerUserId] === false ? 'bg-red-500' : 'bg-[#D4AF37] animate-pulse'}`}></span>
+                                {isEditingName && t.ownerUserId === userId ? (
+                                  <div className="flex items-center gap-1">
+                                    <input 
+                                      autoFocus
+                                      type="text"
+                                      value={tempName}
+                                      onChange={(e) => setTempName(e.target.value)}
+                                      onKeyDown={(e) => e.key === 'Enter' && handleChangeName()}
+                                      className="bg-white/10 border-b border-[#D4AF37] text-[10px] font-bold text-white uppercase focus:outline-none w-24"
+                                    />
+                                    <button onClick={handleChangeName} className="text-emerald-400 hover:text-emerald-300"><Check className="w-3 h-3"/></button>
+                                    <button onClick={() => setIsEditingName(false)} className="text-red-400 hover:text-red-300"><X className="w-3 h-3"/></button>
+                                  </div>
+                                ) : (
+                                  <>
+                                    <span className="text-[10px] font-bold text-slate-500 uppercase truncate">{t.ownerName}</span>
+                                    {t.ownerUserId === userId && (
+                                      <button 
+                                        onClick={() => { setTempName(t.ownerName); setIsEditingName(true); }}
+                                        className="p-1 hover:text-[#D4AF37] text-slate-600 transition-colors"
+                                      >
+                                        <Layout className="w-3 h-3" />
+                                      </button>
+                                    )}
+                                  </>
+                                )}
+                                {t.isBot && <Bot className="w-3 h-3 text-sky-400" />}
+                                {t.ownerSocketId && voiceParticipants?.has(t.ownerSocketId) && (
+                                  <span className="text-emerald-500 animate-pulse" title="In Voice Chat">
+                                    <Mic className="w-3 h-3" />
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              {isPrimaryHost && t.ownerUserId !== userId && (
+                                <button onClick={() => handleToggleCoHost(t.ownerUserId)} className={`p-2 rounded-lg transition-all ${coHostUserIds.includes(t.ownerUserId) ? 'text-[#D4AF37] bg-[#D4AF37]/10' : 'text-slate-600 hover:text-white'}`} title="Toggle Co-Host">
+                                  <Crown className="w-4 h-4" />
+                                </button>
+                              )}
+                              {isModerator && t.ownerUserId !== userId && (
+                                <button onClick={() => setKickTarget({ socketId: t.ownerSocketId, name: t.ownerName })} className="p-2 text-slate-600 hover:text-red-400 transition-all" title="Expel Owner">
+                                  <LogOut className="w-4 h-4" />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Secondary List: Spectators & Requests */}
+                    <div className="space-y-6 lg:h-[500px] h-auto flex flex-col">
+                      {/* Requests Block */}
+                      {isHost && joinRequests.length > 0 && (
+                        <div className="glass-panel p-6 rounded-[32px] border-[#D4AF37]/30 bg-[#D4AF37]/5 space-y-4">
+                          <h3 className="text-[10px] font-black text-[#D4AF37] uppercase tracking-widest flex items-center gap-2 animate-pulse">
+                            <AlertTriangle className="w-3 h-3" /> Entry Requests ({joinRequests.length})
                           </h3>
                           <div className="space-y-2">
                             {joinRequests.map((req) => (
-                              <div
-                                key={req.socketId}
-                                className="p-3 md:p-4 rounded-2xl bg-[#D4AF37]/5 border border-[#D4AF37]/20 flex flex-col md:flex-row md:items-center justify-between gap-3"
-                              >
-                                <div className="flex items-center gap-3">
-                                  <div className="w-8 h-8 rounded-full bg-[#D4AF37]/20 flex items-center justify-center border border-[#D4AF37]/30">
-                                    <span className="text-xs font-black text-[#FFE58F]">
-                                      {req.name?.charAt(0)}
-                                    </span>
-                                  </div>
-                                  <div>
-                                    <div className="text-sm font-bold text-[#FFE58F]">
-                                      {req.name}
-                                    </div>
-                                    <div className="text-[9px] text-[#D4AF37] uppercase tracking-widest font-black">
-                                      wants to join
-                                    </div>
-                                  </div>
-                                </div>
-                                <div className="flex gap-2 text-xs font-black uppercase tracking-widest">
-                                  <button
-                                    onClick={() =>
-                                      socket.emit("approve_participation", {
-                                        roomCode: roomState.roomCode,
-                                        targetSocketId: req.socketId,
-                                      })
-                                    }
-                                    className="flex-1 md:flex-none px-4 py-2 bg-[#FFE58F]/10 text-[#FFE58F] hover:bg-[#FFE58F] hover:text-[#1a1205] border border-[#FFE58F]/20 hover:border-[#FFE58F] rounded-xl transition-all shadow-[0_0_10px_rgba(255,229,143,0.1)] hover:shadow-[0_0_15px_rgba(255,229,143,0.4)]"
-                                  >
-                                    Approve
+                              <div key={req.socketId} className="flex items-center justify-between p-3 rounded-xl bg-black/40 border border-white/10">
+                                <span className="text-xs font-black text-white px-2 truncate">{req.name}</span>
+                                <div className="flex gap-1">
+                                  <button onClick={() => socket.emit("approve_participation", { roomCode: roomState.roomCode, targetSocketId: req.socketId })} className="p-2 rounded-lg bg-[#D4AF37]/10 text-[#D4AF37] hover:bg-[#D4AF37] hover:text-black transition-all">
+                                    <Check className="w-3.5 h-3.5" />
                                   </button>
-                                  <button
-                                    onClick={() =>
-                                      socket.emit("reject_participation", {
-                                        roomCode: roomState.roomCode,
-                                        targetSocketId: req.socketId,
-                                      })
-                                    }
-                                    className="flex-1 md:flex-none px-4 py-2 bg-[#FF4C4C]/10 text-[#FF4C4C] hover:bg-[#FF4C4C] hover:text-[#1a1205] border border-[#FF4C4C]/20 hover:border-[#FF4C4C] rounded-xl transition-all"
-                                  >
-                                    Reject
+                                  <button onClick={() => socket.emit("reject_participation", { roomCode: roomState.roomCode, targetSocketId: req.socketId })} className="p-2 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-white transition-all">
+                                    <LogOut className="w-3.5 h-3.5" />
                                   </button>
                                 </div>
                               </div>
@@ -969,222 +883,151 @@ const Lobby = () => {
                         </div>
                       )}
 
-                    {/* Spectators List */}
-                    {spectators.length > 0 && (
-                      <div className="mt-8 space-y-4">
-                        <div className="flex items-center justify-between ml-1">
-                          <h3 className="text-[10px] font-black text-[#D4AF37]/60 uppercase tracking-widest">
-                            Spectators ({spectators.length})
-                          </h3>
-                        </div>
-                        <div className="space-y-2">
+                      {/* Spectators Block */}
+                      <div className="glass-panel p-8 rounded-[40px] border-white/10 bg-black/40 backdrop-blur-3xl flex-1 flex flex-col overflow-hidden">
+                        <h3 className="text-xs font-black text-slate-500 uppercase tracking-[0.3em] mb-4">Observers ({spectators.length})</h3>
+                        <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 space-y-2">
                           {spectators.map((s) => (
-                            <div
-                              key={s.socketId}
-                              className="flex items-center gap-4 p-3 rounded-2xl bg-[#0a0702] border border-[#D4AF37]/20 relative group hover:bg-[#D4AF37]/5 transition-colors"
-                            >
-                              {/* Avatar with status dot */}
-                              <div className="relative w-8 h-8 shrink-0">
-                                <div className="w-8 h-8 rounded-full bg-[#1a1205] flex items-center justify-center border border-[#D4AF37]/30">
-                                  <span className="text-[10px] font-black text-[#FFE58F]">
-                                    {s.name?.charAt(0) || "?"}
-                                  </span>
-                                </div>
-                                <span
-                                  className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-[#0a0702] ${onlineMap[s.socketId] === false
-                                    ? "bg-[#FF4C4C] shadow-[0_0_6px_#FF4C4C]"
-                                    : "bg-[#FFE58F] shadow-[0_0_6px_#FFE58F]"
-                                    }`}
-                                  title={onlineMap[s.socketId] === false ? "Offline" : "Online"}
-                                />
-                              </div>
-                              <div className="text-sm font-bold text-[#FFE58F]">
-                                {s.name}
-                                {s.socketId === socket.id && (
-                                  <span className="ml-2 text-[10px] font-black text-[#1a1205] uppercase tracking-widest bg-[#D4AF37] px-2 py-0.5 rounded-full border border-[#FFE58F]">
-                                    You
-                                  </span>
-                                )}
-                              </div>
+                            <div key={s.socketId} className="flex items-center gap-3 p-3 rounded-xl bg-white/5 border border-white/5 group">
+                              <div className="w-8 h-8 rounded-full bg-black/40 border border-white/10 flex items-center justify-center text-[10px] font-black text-slate-500">{s.name?.charAt(0)}</div>
+                              <span className="text-[11px] font-bold text-slate-400 group-hover:text-white transition-colors">{s.name}</span>
+                              {s.socketId === socket.id && <span className="text-[8px] font-black text-[#1a1205] bg-[#D4AF37] px-2 py-0.5 rounded-full uppercase ml-auto">You</span>}
                             </div>
                           ))}
                         </div>
                       </div>
-                    )}
-
-                    {isModerator ? (
-                      <button
-                        onClick={handleStart}
-                        className="w-full btn-premium py-4 bg-[#FFE58F] text-[#1a1205] border-none shadow-[0_0_50px_rgba(255,229,143,0.3)] hover:bg-white transition-all mt-6 font-black uppercase tracking-widest text-[10px]"
-                      >
-                        Initiate Auction Loop
-                      </button>
-                    ) : (
-                      <div className="w-full p-6 rounded-2xl bg-[#0a0702]/80 border border-[#D4AF37]/20 text-center mt-4 shadow-inner">
-                        <div className="text-[#D4AF37]/50 text-[10px] font-black uppercase tracking-[0.2em] animate-pulse">
-                          Waiting for host to start...
-                        </div>
-                      </div>
-                    )}
+                    </div>
                   </div>
                 )}
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </motion.div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
-      {/* Leave Confirmation Modal */}
+      {/* Confirmation Modals */}
       <AnimatePresence>
-        {/* Kick Confirmation Modal */}
-        {kickTarget && (
-          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-            <div className="glass-card max-w-sm w-full p-8 rounded-3xl border border-[#D4AF37]/20 shadow-2xl relative overflow-hidden bg-[#0a0702]/90">
-              <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-[#FFE58F] to-[#D4AF37]"></div>
-
-              <div className="flex flex-col items-center text-center space-y-6">
-                <div className="w-16 h-16 rounded-full bg-[#FF4C4C]/10 flex items-center justify-center mb-2">
-                  <svg className="w-8 h-8 text-[#FF4C4C]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 7a4 4 0 11-8 0 4 4 0 018 0zM9 14a6 6 0 00-6 6v1h12v-1a6 6 0 00-6-6zM21 12h-6" />
-                  </svg>
+        {/* Host Settings Modal */}
+        {showSettings && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+            <motion.div initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }} className="w-full max-w-md bg-[#1a1205] border border-[#D4AF37]/30 rounded-[32px] overflow-hidden shadow-[0_0_50px_rgba(212,175,55,0.2)]">
+              <div className="p-8 space-y-8">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-2xl bg-[#D4AF37]/10 flex items-center justify-center border border-[#D4AF37]/20">
+                    <Settings className="w-6 h-6 text-[#D4AF37]" />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-black text-white uppercase tracking-widest leading-none">Arena Config</h3>
+                    <p className="text-[10px] font-bold text-slate-500 uppercase tracking-tight mt-1">Host Privilege Access Only</p>
+                  </div>
                 </div>
 
-                <div>
-                  <h3 className="text-xl font-black text-[#FFE58F] uppercase tracking-wider mb-2">
-                    Kick Player?
-                  </h3>
-                  <p className="text-[#D4AF37]/70 text-sm font-medium">
-                    Are you sure you want to kick{" "}
-                    <span className="text-[#FFE58F] font-black">{kickTarget.name}</span>{" "}
-                    from the waiting room?
-                  </p>
+                <div className="space-y-6">
+                  {/* Spectator Toggle */}
+                  <div className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/5">
+                    <div className="flex items-center gap-3">
+                      <Telescope className="w-4 h-4 text-sky-400" />
+                      <span className="text-[10px] font-black text-white uppercase tracking-widest">Allow Spectators</span>
+                    </div>
+                    <button 
+                      onClick={() => setLocalLobbySettings(prev => ({ ...prev, allowSpectators: !prev.allowSpectators }))}
+                      className={`w-12 h-6 rounded-full transition-all relative ${localLobbySettings.allowSpectators ? 'bg-emerald-500' : 'bg-slate-700'}`}
+                    >
+                      <motion.div 
+                        animate={{ x: localLobbySettings.allowSpectators ? 24 : 4 }}
+                        className="absolute top-1 left-0 w-4 h-4 bg-white rounded-full shadow-lg"
+                      />
+                    </button>
+                  </div>
+
+                  {/* Spectator Limit */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between px-1">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Observer Limit (Max 10)</label>
+                      <span className="text-xs font-black text-[#D4AF37]">{localLobbySettings.maxSpectators}</span>
+                    </div>
+                    <input 
+                      type="range" min="1" max="10" 
+                      value={localLobbySettings.maxSpectators}
+                      onChange={(e) => setLocalLobbySettings(prev => ({ ...prev, maxSpectators: parseInt(e.target.value) }))}
+                      disabled={!localLobbySettings.allowSpectators}
+                      className="w-full accent-[#D4AF37] opacity-60 hover:opacity-100 transition-opacity disabled:opacity-20"
+                    />
+                  </div>
+
+                   {/* Team Count */}
+                   <div className="space-y-4">
+                     <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-1">Total Franchises</label>
+                     <div className="flex gap-3">
+                       <button 
+                         onClick={() => setLocalLobbySettings(prev => ({ ...prev, teamCount: 10 }))}
+                         className={`flex-1 py-4 rounded-2xl border transition-all flex flex-col items-center gap-1 ${localLobbySettings.teamCount === 10 ? 'bg-[#D4AF37]/20 border-[#D4AF37] text-[#D4AF37]' : 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10'}`}
+                       >
+                         <span className="text-sm font-black italic tracking-tighter">10</span>
+                         <span className="text-[8px] font-black uppercase tracking-widest opacity-60">Modern</span>
+                       </button>
+                       <button 
+                         onClick={() => setLocalLobbySettings(prev => ({ ...prev, teamCount: 15 }))}
+                         className={`flex-1 py-4 rounded-2xl border transition-all flex flex-col items-center gap-1 ${localLobbySettings.teamCount === 15 ? 'bg-[#D4AF37]/20 border-[#D4AF37] text-[#D4AF37]' : 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10'}`}
+                       >
+                         <span className="text-sm font-black italic tracking-tighter">15</span>
+                         <span className="text-[8px] font-black uppercase tracking-widest opacity-60">Legacy</span>
+                       </button>
+                     </div>
+                     <p className="text-[8px] font-bold text-slate-500 uppercase tracking-tight text-center italic">
+                       {localLobbySettings.teamCount === 10 ? "Modern 10 Teams Only — No Legacy Franchises allowed." : "All 15 Franchises enabled including Legacy teams."}
+                     </p>
+                   </div>
                 </div>
 
-                <div className="flex w-full gap-4 text-[10px] font-black uppercase tracking-widest">
-                  <button
-                    onClick={() => setKickTarget(null)}
-                    className="flex-1 py-4 flex flex-col items-center justify-center gap-2 rounded-2xl bg-[#D4AF37]/5 border border-[#D4AF37]/20 text-[#D4AF37]/60 hover:bg-[#D4AF37]/10 hover:text-[#FFE58F] transition-all group"
-                  >
-                    <div className="w-10 h-10 rounded-full bg-[#FF4C4C]/20 group-hover:bg-[#FF4C4C] flex items-center justify-center transition-colors">
-                      <svg className="w-5 h-5 text-[#FF4C4C] group-hover:text-[#1a1205]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </div>
-                    Cancel
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      socket.emit("kick_player", {
-                        roomCode: roomState.roomCode,
-                        targetSocketId: kickTarget.socketId,
-                      });
-                      setKickTarget(null);
-                    }}
-                    className="flex-1 py-4 flex flex-col items-center justify-center gap-2 rounded-2xl bg-[#D4AF37]/5 border border-[#D4AF37]/20 text-[#D4AF37]/60 hover:bg-[#D4AF37]/10 hover:text-[#FFE58F] transition-all group"
-                  >
-                    <div className="w-10 h-10 rounded-full bg-[#FFE58F]/20 group-hover:bg-[#FFE58F] flex items-center justify-center transition-colors">
-                      <svg className="w-5 h-5 text-[#FFE58F] group-hover:text-[#1a1205]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" />
-                      </svg>
-                    </div>
-                    Kick
-                  </button>
+                <div className="flex gap-3 pt-4">
+                  <button onClick={() => setShowSettings(false)} className="flex-1 py-4 rounded-2xl bg-white/5 border border-white/10 text-[10px] font-black text-slate-400 uppercase tracking-widest hover:bg-white/10 transition-all">Cancel</button>
+                  <button onClick={handleUpdateLobbySettings} className="flex-2 px-8 py-4 rounded-2xl bg-[#D4AF37] text-[#1a1205] text-[10px] font-black uppercase tracking-widest hover:bg-[#FFE58F] transition-all shadow-[0_0_20px_rgba(212,175,55,0.2)]">Global Save</button>
                 </div>
               </div>
-            </div>
-          </div>
+            </motion.div>
+          </motion.div>
         )}
 
-        {/* Leave Confirmation Modal */}
-        {showLeaveConfirm && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
-          >
-            <div className="glass-card max-w-sm w-full p-8 rounded-3xl border border-[#D4AF37]/20 shadow-2xl relative overflow-hidden bg-[#0a0702]/90">
-              <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-[#FFE58F] to-[#D4AF37]"></div>
-
-              <div className="flex flex-col items-center text-center space-y-6">
-                <div className="w-16 h-16 rounded-full bg-[#FF4C4C]/10 flex items-center justify-center mb-2">
-                  <svg
-                    className="w-8 h-8 text-[#FF4C4C]"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth="2"
-                      d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-                    />
-                  </svg>
+        {/* Kick Confirmation */}
+        {kickTarget && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+            <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="glass-panel p-8 rounded-[40px] border-red-500/20 max-w-sm w-full space-y-8 bg-black/60">
+              <div className="text-center space-y-4">
+                <div className="w-16 h-16 rounded-3xl bg-red-500/10 flex items-center justify-center mx-auto border border-red-500/20">
+                  <LogOut className="w-8 h-8 text-red-500" />
                 </div>
-
                 <div>
-                  <h3 className="text-xl font-black text-[#FFE58F] uppercase tracking-wider mb-2">
-                    Leave Waiting Room?
-                  </h3>
-                  <p className="text-[#D4AF37]/70 text-sm font-medium">
-                    Are you sure you want to{" "}
-                    {isHost &&
-                      roomState?.status === "Lobby"
-                      ? "disband this waiting room"
-                      : "leave this waiting room"}
-                    ?
-                  </p>
-                </div>
-
-                <div className="flex w-full gap-4 mt-4 text-[10px] font-black uppercase tracking-widest">
-                  <button
-                    onClick={() => setShowLeaveConfirm(false)}
-                    className="flex-1 py-4 flex flex-col items-center justify-center gap-2 rounded-2xl bg-[#D4AF37]/5 border border-[#D4AF37]/20 text-[#D4AF37]/60 hover:bg-[#D4AF37]/10 hover:text-[#FFE58F] transition-all group"
-                  >
-                    <div className="w-10 h-10 rounded-full bg-[#FF4C4C]/20 group-hover:bg-[#FF4C4C] flex items-center justify-center transition-colors">
-                      <svg
-                        className="w-5 h-5 text-[#FF4C4C] group-hover:text-[#1a1205]"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth="3"
-                          d="M6 18L18 6M6 6l12 12"
-                        />
-                      </svg>
-                    </div>
-                    <span>Cancel</span>
-                  </button>
-
-                  <button
-                    onClick={confirmLeaveRoom}
-                    className="flex-1 py-4 flex flex-col items-center justify-center gap-2 rounded-2xl bg-[#FF4C4C]/10 border border-[#FF4C4C]/20 text-[#FF4C4C] hover:bg-[#FF4C4C] hover:text-[#1a1205] transition-all group shadow-[0_0_15px_rgba(255,76,76,0.1)]"
-                  >
-                    <div className="w-10 h-10 rounded-full bg-[#FFE58F]/20 group-hover:bg-[#FFE58F] flex items-center justify-center transition-colors">
-                      <svg
-                        className="w-5 h-5 text-[#FFE58F] group-hover:text-[#1a1205]"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth="3"
-                          d="M5 13l4 4L19 7"
-                        />
-                      </svg>
-                    </div>
-                    <span>Confirm</span>
-                  </button>
+                  <h3 className="text-xl font-black text-white uppercase tracking-widest">Expel Owner?</h3>
+                  <p className="text-slate-500 text-sm font-bold uppercase tracking-tight mt-2">Remove <span className="text-red-400">{kickTarget.name}</span> from the terminal?</p>
                 </div>
               </div>
-            </div>
+              <div className="grid grid-cols-2 gap-4">
+                <button onClick={() => setKickTarget(null)} className="py-4 rounded-2xl bg-white/5 text-white font-black text-[10px] uppercase tracking-widest border border-white/10 hover:bg-white/10 transition-all">Cancel</button>
+                <button onClick={() => { socket.emit("kick_player", { roomCode: roomState.roomCode, targetSocketId: kickTarget.socketId }); setKickTarget(null); }} className="py-4 rounded-2xl bg-red-500 text-white font-black text-[10px] uppercase tracking-widest shadow-[0_0_30px_rgba(239,68,68,0.3)] hover:bg-red-600 transition-all">Expel</button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+
+        {/* Leave Confirmation */}
+        {showLeaveConfirm && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+            <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="glass-panel p-8 rounded-[40px] border-[#D4AF37]/20 max-w-sm w-full space-y-8 bg-black/60">
+              <div className="text-center space-y-4">
+                <div className="w-16 h-16 rounded-3xl bg-[#D4AF37]/10 flex items-center justify-center mx-auto border border-[#D4AF37]/20">
+                  <AlertTriangle className="w-8 h-8 text-[#D4AF37]" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-black text-white uppercase tracking-widest">Abort Mission?</h3>
+                  <p className="text-slate-500 text-sm font-bold uppercase tracking-tight mt-2">{isHost ? "This will disband the terminal for all owners." : "You will be disconnected from the auction floor."}</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <button onClick={() => setShowLeaveConfirm(false)} className="py-4 rounded-2xl bg-white/5 text-white font-black text-[10px] uppercase tracking-widest border border-white/10 hover:bg-white/10 transition-all">Stay</button>
+                <button onClick={confirmLeaveRoom} className="py-4 rounded-2xl bg-red-500 text-white font-black text-[10px] uppercase tracking-widest shadow-[0_0_30px_rgba(239,68,68,0.3)] hover:bg-red-600 transition-all">Abort</button>
+              </div>
+            </motion.div>
           </motion.div>
         )}
       </AnimatePresence>

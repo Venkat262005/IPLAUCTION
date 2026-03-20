@@ -33,9 +33,9 @@ export const SessionProvider = ({ children }) => {
     const [token, setToken] = useState(null);
     const [isReady, setIsReady] = useState(false);
 
-    // On mount, try to hydrate from localStorage
+    // On mount, try to hydrate from sessionStorage
     useEffect(() => {
-        const savedToken = localStorage.getItem(SESSION_KEY);
+        const savedToken = sessionStorage.getItem(SESSION_KEY);
         if (savedToken) {
             const payload = decodeJwt(savedToken);
             if (payload) {
@@ -45,7 +45,7 @@ export const SessionProvider = ({ children }) => {
                 setPlayerName(payload.playerName);
             } else {
                 // Expired or malformed — clear it
-                localStorage.removeItem(SESSION_KEY);
+                sessionStorage.removeItem(SESSION_KEY);
             }
         }
         setIsReady(true);
@@ -54,7 +54,7 @@ export const SessionProvider = ({ children }) => {
     /**
      * initSession(name) — Creates a new session for the given display name.
      * 
-     * IDEMPOTENT: If a valid, non-expired token already exists in localStorage,
+     * IDEMPOTENT: If a valid, non-expired token already exists in sessionStorage,
      * it is returned immediately without creating a new UUID. A new UUID is ONLY
      * generated on the very first login (or after a token expires/is cleared).
      */
@@ -62,7 +62,7 @@ export const SessionProvider = ({ children }) => {
         if (!name?.trim()) throw new Error('Player name is required');
 
         // Check if we already have a valid, non-expired session
-        const savedToken = localStorage.getItem(SESSION_KEY);
+        const savedToken = sessionStorage.getItem(SESSION_KEY);
         if (savedToken) {
             const payload = decodeJwt(savedToken);
             // ONLY reuse if the name matches exactly. If the user typed a new name,
@@ -102,8 +102,8 @@ export const SessionProvider = ({ children }) => {
         }
 
         const data = await response.json();
-        localStorage.setItem(SESSION_KEY, data.token);
-        // Do NOT store plain playerName in localStorage to avoid bleed in multi-tab testing
+        sessionStorage.setItem(SESSION_KEY, data.token);
+        // Do NOT store plain playerName in sessionStorage to avoid bleed in multi-tab testing
         setToken(data.token);
         setUserId(data.userId);
         setPlayerName(data.playerName);
@@ -114,7 +114,7 @@ export const SessionProvider = ({ children }) => {
      * clearSession() — Logs the user out.
      */
     const clearSession = useCallback(() => {
-        localStorage.removeItem(SESSION_KEY);
+        sessionStorage.removeItem(SESSION_KEY);
         setToken(null);
         setUserId(null);
         setPlayerName('');

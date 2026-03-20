@@ -48,8 +48,27 @@ async function fetchAllPlayers() {
             })
         );
 
+        const allPlayers = poolResults.flat();
+        
+        // --- LEGEND PUSH: Ensure first 5 players are NOT legends ---
+        // The user explicitly requested that legends never appear at the start of the auction.
+        for (let i = 0; i < Math.min(5, allPlayers.length); i++) {
+            const pName = allPlayers[i].player || allPlayers[i].name || "";
+            if (LEGEND_NAMES.includes(pName)) {
+                // Find first non-legend from index 5 onwards to swap
+                for (let j = 5; j < allPlayers.length; j++) {
+                    const swapName = allPlayers[j].player || allPlayers[j].name || "";
+                    if (!LEGEND_NAMES.includes(swapName)) {
+                        // Swap legendary player further back
+                        [allPlayers[i], allPlayers[j]] = [allPlayers[j], allPlayers[i]];
+                        break;
+                    }
+                }
+            }
+        }
+        
         console.timeEnd("[DATA] Multi-fetch duration");
-        return poolResults.flat();
+        return allPlayers;
     } catch (err) {
         console.error("[DATA] Multi-collection fetch error:", err.message);
         return [];
@@ -134,6 +153,13 @@ const AI_BOTS = [
     { name: 'Kittu', userId: 'bot_kittu' },
     { name: 'Bittu', userId: 'bot_bittu' },
     { name: 'Jojo', userId: 'bot_jojo' }
+];
+const LEGEND_NAMES = [
+    "Virat Kohli", "MS Dhoni", "Rohit Sharma", 
+    "AB de Villiers", "Suresh Raina", "David Warner", "Chris Gayle", 
+    "Jasprit Bumrah", "Bhuvneshwar Kumar", "Lasith Malinga", "Yuzvendra Chahal", 
+    "Dale Steyn", "Hardik Pandya", "Ravindra Jadeja", "Kieron Pollard", 
+    "Andre Russell", "Dwayne Bravo", "Sachin Tendulkar", "Virender Sehwag"
 ];
 const roomStates = {}; // Keep active room state in memory for fast access, flush to DB periodically / at end
 
@@ -274,6 +300,13 @@ async function handleAuctionEndTransition(roomCode, io) {
     if (roomTimers[roomCode]) {
         clearInterval(roomTimers[roomCode]);
         delete roomTimers[roomCode];
+    }
+
+    // [NEW] AI Mode Bypass: Skip interest voting and re-auction rounds
+    if (state.isAiMode) {
+        console.log(`[AI-MODE] Skipping interest voting/re-auction for room ${roomCode}. Moving to selection.`);
+        startSelectionPhase(roomCode, io);
+        return;
     }
 
     // --- EXHAUSTION SKIP ---
@@ -529,8 +562,9 @@ async function triggerBackgroundEvaluation(roomCode, teamIndex, io) {
 async function finalizeResults(roomCode, io) {
     const state = roomStates[roomCode];
     if (!state) return;
-    if (state.status === 'Finished' || state.isFinalizing) return;
+    if (state.status === 'Finished' || state.status === 'Evaluating' || state.isFinalizing) return;
     state.isFinalizing = true;
+    state.status = 'Evaluating';
 
     // ── EVALUATION PHASE TIMER (240s) ──────────────────────────────────────
     // Emit evaluation_started so the client swaps from "Selection Timer" to
@@ -862,7 +896,10 @@ const setupSocketHandlers = (io) => {
                     currentPlayerIndex: 0,
                     hostUserId: userId,
                     hostName: playerName,
-                    isAiMode: isAiMode // [NEW]
+                    isAiMode: isAiMode, // [NEW]
+                    allowSpectators: true,
+                    maxSpectators: 10,
+                    teamCount: 15
                 });
                 await newRoom.save();
 
@@ -888,7 +925,10 @@ const setupSocketHandlers = (io) => {
                     timer: 0,
                     timerDuration: 10,
                     isReAuctionRound: false,
-                    unsoldHistory: []
+                    unsoldHistory: [],
+                    allowSpectators: true,
+                    maxSpectators: 10,
+                    teamCount: 15
                 };
 
                 socket.emit('room_created', { roomCode, state: roomStates[roomCode] });
@@ -921,34 +961,72 @@ const setupSocketHandlers = (io) => {
                     return socket.emit('error', 'Room not found or not active');
                 }
 
-                // Match by userId (secure), fallback to playerName for backward compat
-                const existingTeam = userId
-                    ? state.teams.find(t => t.ownerUserId === userId)
-                    : state.teams.find(t => t.ownerName === playerName);
+                // Match ONLY by userId (secure). No playerName fallback to avoid identity hijacking.
+                const existingTeam = userId ? state.teams.find(t => t.ownerUserId === userId) : null;
+                const existingSpectator = userId ? state.spectators?.find(s => s.userId === userId) : null;
+
+                // Occupancy Calculation: Get active sockets early for all checks
+                const roomSockets = io.sockets.adapter.rooms.get(roomCode);
+                const activeSids = roomSockets ? [...roomSockets] : [];
+                const totalParticipants = activeSids.length;
 
                 // RELAXED JOINING FOR RE-ENTRY:
                 // If the user already owned a team, always allow them back in.
-                // This fixes the "blocked after refresh/disconnect" bug.
                 const isApproved = (userId && state.approvedUserIds?.includes(userId)) || state.approvedSpectators?.includes(socket.id);
-                if (state.status !== 'Lobby' && !existingTeam && !asSpectator && !isApproved) {
-                    return socket.emit('error', 'Auction already started. Only original participants can re-join.');
+                if (state.status !== 'Lobby' && !existingTeam && !isApproved) {
+                    if (asSpectator) {
+                        return socket.emit('error', 'SPECTATOR_APPROVAL_REQUIRED');
+                    } else {
+                        return socket.emit('error', 'PLAYER_JOIN_DISABLED');
+                    }
                 }
 
-                // Check if room is already completely full
-                const totalPlayers = state.teams.length + (state.spectators?.length || 0);
-                if (!existingTeam && totalPlayers >= 30) {
+                console.log(`[JOIN_ATTEMPT] Room:${roomCode} User:${playerName} asSpec:${asSpectator} TotalInRoom:${totalParticipants}`);
+
+                if (!existingTeam && totalParticipants >= 30) {
                     return socket.emit('error', 'Room is currently full (Max 30 participants)');
                 }
 
-                // Duplicate name check: for new joiners only (not returning owners)
-                // Compare case-insensitively to avoid "Venkat" vs "venkat" confusion.
+                // Spectator Limits & Automatic Assignment Detection
+                // Count people who are ALREADY identified as spectators
+                const currentSpecsCount = (state.spectators || []).length;
+                // Count people who are ALREADY identified as players (owners or potential players in lobby)
+                const alreadyIngameSids = state.teams.map(t => t.ownerSocketId).filter(Boolean);
+                // Potential players are those in the room who aren't spectators and aren't existing owners
+                const lobbyPlayersCount = activeSids.filter(sid =>
+                    !state.spectators?.some(s => s.socketId === sid) &&
+                    !alreadyIngameSids.includes(sid)
+                ).length;
+
+                const occupiedPlayerSlots = state.teams.length + lobbyPlayersCount;
+                const maxPlayerSlots = state.teamCount || 15;
+
+                console.log(`[JOIN_CALC] OccupiedSlots:${occupiedPlayerSlots}/${maxPlayerSlots} CurrentSpecs:${currentSpecsCount}/${state.maxSpectators || 10}`);
+
+                // Force to spectator if player slots are full OR they were already a spectator
+                const mustBeSpectator = asSpectator || existingSpectator || (!existingTeam && occupiedPlayerSlots >= maxPlayerSlots);
+
+                if (mustBeSpectator && !existingTeam && !existingSpectator) {
+                    const allowSpecs = state.allowSpectators !== false;
+                    if (!allowSpecs) {
+                        return socket.emit('error', 'Spectators are disabled for this room due to host restrictions.');
+                    }
+                    
+                    const maxSpecs = state.maxSpectators || 10;
+                    if (currentSpecsCount >= maxSpecs) {
+                        return socket.emit('error', `Spectator limit reached (Max ${maxSpecs}). No slots available to join.`);
+                    }
+                }
+
+                // Duplicate name search across all roles
                 if (!existingTeam && playerName) {
                     const nameLower = playerName.toLowerCase().trim();
-                    const takenByTeam = state.teams.some(t => t.ownerName?.toLowerCase().trim() === nameLower);
-                    const takenBySpectator = state.spectators?.some(s => s.name?.toLowerCase().trim() === nameLower);
-                    const takenByHost = state.hostName?.toLowerCase().trim() === nameLower;
+                    const isNameTakenByTeam = state.teams.some(t => t.ownerName?.toLowerCase().trim() === nameLower);
+                    const isNameTakenBySpectator = state.spectators?.some(s => s.name?.toLowerCase().trim() === nameLower);
+                    // Also check host name
+                    const isNameTakenByHost = state.hostName?.toLowerCase().trim() === nameLower;
 
-                    if (takenByTeam || takenBySpectator || takenByHost) {
+                    if (isNameTakenByTeam || isNameTakenBySpectator || isNameTakenByHost) {
                         return socket.emit('name_taken', {
                             message: `"${playerName}" is already taken in this room. Please use a different name.`
                         });
@@ -970,22 +1048,14 @@ const setupSocketHandlers = (io) => {
                     io.to(roomCode).emit('lobby_update', { teams: lightweightTeams(state.teams) });
                 }
 
-                // Only add to spectators if:
-                // 1. They explicitly chose to spectate (asSpectator flag), OR
-                // 2. They are a new user and all teams are already claimed (overflow)
-                if (!existingTeam) {
+                // Add to spectators list if required
+                if (!existingTeam && mustBeSpectator) {
                     if (!state.spectators) state.spectators = [];
-                    const allTeamsTaken = !state.availableTeams || state.availableTeams.length === 0;
-                    const shouldBeSpectator = asSpectator || allTeamsTaken;
-
-                    if (shouldBeSpectator) {
-                        const existingSpectator = state.spectators.find(s => (userId && s.userId === userId) || s.socketId === socket.id);
-                        if (existingSpectator) {
-                            // Update existing record with the new socket ID
-                            existingSpectator.socketId = socket.id;
-                        } else {
-                            state.spectators.push({ socketId: socket.id, userId, name: playerName });
-                        }
+                    const existingSpectator = state.spectators.find(s => (userId && s.userId === userId) || s.socketId === socket.id);
+                    if (existingSpectator) {
+                        existingSpectator.socketId = socket.id;
+                    } else {
+                        state.spectators.push({ socketId: socket.id, userId, name: playerName });
                     }
                 }
 
@@ -1049,6 +1119,23 @@ const setupSocketHandlers = (io) => {
             }
         });
 
+        // --- Voice Chat Signaling ---
+        socket.on('voice-join', ({ roomCode }) => {
+            console.log(`[VOICE] User ${socket.id} joining voice in room ${roomCode}`);
+            // Notify others in the room that a new voice participant has arrived
+            socket.to(roomCode).emit('voice-user-joined', { socketId: socket.id, userId: socket.userId });
+        });
+
+        socket.on('voice-signal', ({ to, signal }) => {
+            // Forward signaling data to the target peer
+            io.to(to).emit('voice-signal', { from: socket.id, signal });
+        });
+
+        socket.on('voice-leave', ({ roomCode }) => {
+            console.log(`[VOICE] User ${socket.id} leaving voice in room ${roomCode}`);
+            socket.to(roomCode).emit('voice-user-left', { socketId: socket.id });
+        });
+
         // Claim Team (Called by players from the Lobby UI)
         socket.on('claim_team', async ({ roomCode, teamId }) => {
             const userId = socket.userId;
@@ -1064,6 +1151,11 @@ const setupSocketHandlers = (io) => {
                     return socket.emit('error', 'You must be approved by the host to join an active auction.');
                 }
 
+                const teamLimit = state.teamCount || 15;
+                if (state.teams.length >= teamLimit) {
+                    return socket.emit('error', `Room is full. Max franchises allowed: ${teamLimit}`);
+                }
+
                 // Check if user already claimed a team (by userId for secure check)
                 const alreadyOwns = userId
                     ? state.teams.some(t => t.ownerUserId === userId)
@@ -1074,6 +1166,12 @@ const setupSocketHandlers = (io) => {
 
                 const teamIndex = state.availableTeams.findIndex(t => t.shortName === teamId);
                 if (teamIndex === -1) return socket.emit('error', 'That franchise is already secured by another owner!');
+
+                // Legacy Team Restriction: If teamCount <= 10, ignore legacy teams
+                const legacyIds = ['DCG', 'KTK', 'PWI', 'RPS', 'GL'];
+                if (teamLimit <= 10 && legacyIds.includes(teamId)) {
+                    return socket.emit('error', 'Legacy franchises are disabled for rooms of 10 or fewer players.');
+                }
 
                 const assignedTeamDef = state.availableTeams.splice(teamIndex, 1)[0];
 
@@ -1538,6 +1636,67 @@ const setupSocketHandlers = (io) => {
             }
         });
 
+        // Update Lobby Settings (Host Only)
+        socket.on('update_lobby_settings', ({ roomCode, allowSpectators, maxSpectators, teamCount }) => {
+            const state = roomStates[roomCode];
+            const mod = isModerator(state, socket.id, socket.userId);
+            if (!state || !mod) return;
+
+            if (typeof allowSpectators === 'boolean') state.allowSpectators = allowSpectators;
+            if (typeof maxSpectators === 'number') state.maxSpectators = Math.min(10, Math.max(1, maxSpectators));
+            if (typeof teamCount === 'number') {
+                if ([10, 15].includes(teamCount)) {
+                    state.teamCount = teamCount;
+                }
+            }
+
+            io.to(roomCode).emit('lobby_settings_updated', {
+                allowSpectators: state.allowSpectators,
+                maxSpectators: state.maxSpectators,
+                teamCount: state.teamCount
+            });
+            
+            console.log(`[LOBBY] Settings updated for ${roomCode}: Specs:${state.allowSpectators}, MaxSpecs:${state.maxSpectators}, Teams:${state.teamCount}`);
+        });
+
+        // Change Owner Name
+        socket.on('change_owner_name', ({ roomCode, newName }) => {
+            const state = roomStates[roomCode];
+            if (!state || !newName || newName.trim().length === 0) return;
+            if (newName.length > 20) return socket.emit('error', 'Name too long (Max 20 chars)');
+
+            const nameLower = newName.toLowerCase().trim();
+            const userId = socket.userId;
+
+            // Check if name is taken
+            const isTakenByTeam = state.teams.some(t => t.ownerUserId !== userId && t.ownerName?.toLowerCase().trim() === nameLower);
+            const isTakenBySpec = (state.spectators || []).some(s => s.socketId !== socket.id && s.name?.toLowerCase().trim() === nameLower);
+            if (isTakenByTeam || isTakenBySpec) {
+                return socket.emit('error', 'This name is already taken in the room');
+            }
+
+            // Update in teams
+            const team = state.teams.find(t => t.ownerUserId === userId);
+            if (team) {
+                team.ownerName = newName.trim();
+                io.to(roomCode).emit('lobby_update', { teams: state.teams });
+            }
+
+            // Update in spectators
+            const spec = (state.spectators || []).find(s => s.socketId === socket.id);
+            if (spec) {
+                spec.name = newName.trim();
+                io.to(roomCode).emit('spectator_update', { spectators: state.spectators });
+            }
+
+            // Update hostName if host
+            if (state.hostUserId === userId) {
+                state.hostName = newName.trim();
+            }
+
+            console.log(`[LOBBY] User ${userId} changed name to: ${newName}`);
+        });
+
         // Selection Phase Handlers (11 + 4 Impact Players)
         socket.on('manual_select_squad', async ({ roomCode, playing11Ids, impactPlayerIds }) => {
             const state = roomStates[roomCode];
@@ -1712,6 +1871,14 @@ const setupSocketHandlers = (io) => {
             }
 
             io.to(roomCode).emit('auction_resumed', { state });
+        });
+
+        socket.on('disconnecting', () => {
+            for (const roomCode of socket.rooms) {
+                if (roomCode !== socket.id) {
+                    socket.to(roomCode).emit('voice-user-left', { socketId: socket.id });
+                }
+            }
         });
 
         socket.on('disconnect', () => {
@@ -1922,22 +2089,63 @@ function loadNextPlayer(roomCode, io) {
     const nextPlayers = state.players.slice(state.currentIndex + 1);
 
     state.currentBid = { amount: 0, teamId: null, teamName: null, teamColor: null, teamLogo: null, ownerName: null };
-    state.timerEndsAt = Date.now() + (state.timerDuration * 1000);
     state.timer = state.timerDuration;
+    
+    // --- LEGEND PAUSE LOGIC ---
+    const playerName = player.player || player.name || "";
+    const isLegend = LEGEND_NAMES.includes(playerName) && state.currentIndex > 0;
 
-    state.status = 'Auctioning'; // Reset to auctioning for the new player
-    io.to(roomCode).emit('new_player', {
-        player,
-        nextPlayers, // Full catalog for carousel and pools view
-        timer: state.timer,
-        skippedHistory: state.skippedHistory || []
-    });
+    if (isLegend) {
+        console.log(`[LEGEND] ${playerName} detected. Pausing auction for 7s intro.`);
+        state.status = 'Paused';
+        state.timer = 0; // Show 0 or static timer during intro
+        
+        io.to(roomCode).emit('new_player', {
+            player,
+            nextPlayers,
+            timer: state.timerDuration,
+            isInitial: state.currentIndex === 0,
+            skippedHistory: state.skippedHistory || []
+        });
 
-    if (roomTimers[roomCode]) clearInterval(roomTimers[roomCode]);
+        io.to(roomCode).emit('auction_paused');
 
-    roomTimers[roomCode] = setInterval(() => {
-        tickTimer(roomCode, io);
-    }, 500);
+        if (roomTimers[roomCode]) clearInterval(roomTimers[roomCode]);
+
+        setTimeout(() => {
+            const refreshedState = roomStates[roomCode];
+            if (refreshedState && refreshedState.status === 'Paused' && refreshedState.currentIndex === state.currentIndex) {
+                console.log(`[LEGEND] Intro finished for ${playerName}. Resuming auction.`);
+                refreshedState.status = 'Auctioning';
+                refreshedState.timer = refreshedState.timerDuration;
+                refreshedState.timerEndsAt = Date.now() + (refreshedState.timerDuration * 1000);
+                
+                io.to(roomCode).emit('auction_resumed', { timer: refreshedState.timerDuration });
+                
+                if (roomTimers[roomCode]) clearInterval(roomTimers[roomCode]);
+                roomTimers[roomCode] = setInterval(() => {
+                    tickTimer(roomCode, io);
+                }, 500);
+            }
+        }, 7000); // 7s duration
+    } else {
+        state.timerEndsAt = Date.now() + (state.timerDuration * 1000);
+        state.status = 'Auctioning'; // Reset to auctioning for the new player
+        
+        io.to(roomCode).emit('new_player', {
+            player,
+            nextPlayers, // Full catalog for carousel and pools view
+            timer: state.timer,
+            isInitial: state.currentIndex === 0,
+            skippedHistory: state.skippedHistory || []
+        });
+
+        if (roomTimers[roomCode]) clearInterval(roomTimers[roomCode]);
+
+        roomTimers[roomCode] = setInterval(() => {
+            tickTimer(roomCode, io);
+        }, 500);
+    }
 }
 
 

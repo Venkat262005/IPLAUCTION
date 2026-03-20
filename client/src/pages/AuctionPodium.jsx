@@ -15,16 +15,173 @@ import {
     useSpring,
     useTransform,
 } from "framer-motion";
-import { Users, Layout, MessageSquare, Play, Pause, Square, ListChecks, AlertTriangle, Settings, Plane, X, SkipForward, FastForward } from 'lucide-react';
+import { Users, Layout, MessageSquare, Play, Pause, Square, ListChecks, AlertTriangle, Settings, Plane, X, SkipForward, FastForward, Mic, MicOff, Phone, PhoneOff, Volume2, VolumeX } from 'lucide-react';
+import { useVoice } from "../context/VoiceContext";
 import GavelSlam from "../components/GavelSlam";
 import {
     TeamList,
     BidHistory,
     ChatSection,
 } from "../components/AuctionSubComponents";
+import Toast from "../components/Toast";
 
-import { playBidSound, playWarningBeep } from "../utils/soundEngine";
+import { playBidSound, playWarningBeep, playLegendIntro, stopLegendIntro } from "../utils/soundEngine";
 import { getFlagUrl, getRoleDisplayName, fmtCr } from "../utils/playerUtils";
+
+const LEGEND_METADATA = {
+    "Virat Kohli": {
+        title: "THE KING",
+        subtitle: "Modern Day Legend",
+        color: "from-red-600 via-yellow-500 to-red-600",
+        aura: "rgba(255, 61, 61, 0.4)",
+        vibe: "👑",
+        accent: "#FFD700"
+    },
+    "MS Dhoni": {
+        title: "THALA",
+        subtitle: "The Captain Cool",
+        color: "from-yellow-400 via-blue-800 to-yellow-400",
+        aura: "rgba(255, 215, 0, 0.4)",
+        vibe: "🦁",
+        accent: "#FFD700"
+    },
+    "Rohit Sharma": {
+        title: "THE HITMAN",
+        subtitle: "Captain of Champions",
+        color: "from-blue-600 via-white to-blue-600",
+        aura: "rgba(0, 75, 160, 0.4)",
+        vibe: "🏏",
+        accent: "#FFFFFF"
+    },
+    "AB de Villiers": {
+        title: "MR. 360",
+        subtitle: "Genius of Modern Cricket",
+        color: "from-red-600 via-black to-red-600",
+        aura: "rgba(239, 68, 68, 0.4)",
+        vibe: "👽",
+        accent: "#FFD700"
+    },
+    "Suresh Raina": {
+        title: "MR. IPL",
+        subtitle: "The Heart of CSK",
+        color: "from-yellow-400 via-yellow-600 to-yellow-400",
+        aura: "rgba(234, 179, 8, 0.4)",
+        vibe: "💛",
+        accent: "#FFD700"
+    },
+    "David Warner": {
+        title: "THE WARRIOR",
+        subtitle: "Bull from the Bullring",
+        color: "from-orange-500 via-black to-orange-600",
+        aura: "rgba(249, 115, 22, 0.4)",
+        vibe: "🔥",
+        accent: "#FFA500"
+    },
+    "Chris Gayle": {
+        title: "UNIVERSE BOSS",
+        subtitle: "King of the T20 Format",
+        color: "from-red-700 via-yellow-500 to-red-700",
+        aura: "rgba(185, 28, 28, 0.4)",
+        vibe: "🕶️",
+        accent: "#FFD700"
+    },
+    "Jasprit Bumrah": {
+        title: "BOOM BOOM",
+        subtitle: "The Greatest in the World",
+        color: "from-blue-700 via-yellow-400 to-blue-700",
+        aura: "rgba(29, 78, 216, 0.4)",
+        vibe: "🎯",
+        accent: "#60A5FA"
+    },
+    "Bhuvneshwar Kumar": {
+        title: "SWING KING",
+        subtitle: "The Artist of Swing",
+        color: "from-orange-400 via-blue-900 to-orange-400",
+        aura: "rgba(251, 146, 60, 0.4)",
+        vibe: "🏏",
+        accent: "#FDBA74"
+    },
+    "Lasith Malinga": {
+        title: "THE SLINGER",
+        subtitle: "God of Death Overs",
+        color: "from-blue-600 via-yellow-500 to-blue-600",
+        aura: "rgba(37, 99, 235, 0.4)",
+        vibe: "⚡",
+        accent: "#EAB308"
+    },
+    "Yuzvendra Chahal": {
+        title: "YUZI",
+        subtitle: "The Smart Spinner",
+        color: "from-pink-500 via-blue-600 to-pink-500",
+        aura: "rgba(236, 72, 153, 0.4)",
+        vibe: "♟️",
+        accent: "#F472B6"
+    },
+    "Dale Steyn": {
+        title: "STEYN GUN",
+        subtitle: "Precision in Pace",
+        color: "from-red-600 via-gray-800 to-red-600",
+        aura: "rgba(220, 38, 38, 0.4)",
+        vibe: "🔫",
+        accent: "#9CA3AF"
+    },
+    "Hardik Pandya": {
+        title: "KUNG FU PANDYA",
+        subtitle: "The Ultimate All-Rounder",
+        color: "from-blue-900 via-yellow-500 to-blue-900",
+        aura: "rgba(30, 58, 138, 0.4)",
+        vibe: "🥊",
+        accent: "#EAB308"
+    },
+    "Ravindra Jadeja": {
+        title: "SIR JADEJA",
+        subtitle: "The Dynamic 3-D Legend",
+        color: "from-yellow-400 via-green-800 to-yellow-400",
+        aura: "rgba(234, 179, 8, 0.4)",
+        vibe: "🗡️",
+        accent: "#FFD700"
+    },
+    "Kieron Pollard": {
+        title: "POLLY",
+        subtitle: "The Powerful Finisher",
+        color: "from-blue-800 via-yellow-600 to-blue-800",
+        aura: "rgba(30, 64, 175, 0.4)",
+        vibe: "🏝️",
+        accent: "#FFD700"
+    },
+    "Andre Russell": {
+        title: "DRE RUSS",
+        subtitle: "Muscle of Muscle",
+        color: "from-purple-700 via-yellow-500 to-purple-700",
+        aura: "rgba(126, 34, 206, 0.4)",
+        vibe: "💪",
+        accent: "#EAB308"
+    },
+    "Dwayne Bravo": {
+        title: "CHAMPION",
+        subtitle: "The Showman",
+        color: "from-yellow-400 via-blue-700 to-yellow-400",
+        aura: "rgba(234, 179, 8, 0.4)",
+        vibe: "🕺",
+        accent: "#FFD700"
+    },
+    "Sachin Tendulkar": {
+        title: "GOD OF CRICKET",
+        subtitle: "The Ultimate Legend",
+        color: "from-blue-600 via-orange-500 to-blue-600",
+        aura: "rgba(37, 99, 235, 0.4)",
+        vibe: "🙌",
+        accent: "#FFFFFF"
+    },
+    "Virender Sehwag": {
+        title: "NAWAB OF NAJAFGARH",
+        subtitle: "The Boundary Master",
+        color: "from-blue-800 via-red-600 to-blue-800",
+        aura: "rgba(30, 64, 175, 0.4)",
+        vibe: "💥",
+        accent: "#F87171"
+    }
+};
 
 const AuctionPodium = () => {
     const { roomCode } = useParams();
@@ -40,6 +197,7 @@ const AuctionPodium = () => {
     // If user joined as a spectator (passed via navigate state), keep them in spectator mode
     const forceSpectator = location.state?.isSpectator === true;
     const { playerName, userId, isReady: isSessionReady } = useSession();
+    const { isJoined: isVoiceJoined, isMuted: isVoiceMuted, joinVoice, leaveVoice, toggleMute, voiceParticipants } = useVoice();
     const [currentPlayer, setCurrentPlayer] = useState(null);
     const currentPlayerRef = useRef(null); // Needed for safety-net sync timeouts
     const bidWarSentRef = useRef(false); // Fires bidding_war chat alert only once per player
@@ -111,6 +269,10 @@ const AuctionPodium = () => {
     const [votingSession, setVotingSession] = useState(null);
     const [showVotingModal, setShowVotingModal] = useState(false);
     const [selectedVotes, setSelectedVotes] = useState([]);
+
+    // Legendary Welcome State
+    const [legendaryWelcome, setLegendaryWelcome] = useState(null);
+
 
     // Chat State
     const [chatMessages, setChatMessages] = useState([]);
@@ -197,6 +359,7 @@ const AuctionPodium = () => {
             socket.emit("request_team_roster", { teamId: expandedTeamId });
         }
     }, [expandedTeamId, roomCode, teamRosters, socket]);
+
     useEffect(() => {
         if (!socket || !roomCode || !isSessionReady) return;
         setIsSocketReady(true);
@@ -244,11 +407,31 @@ const AuctionPodium = () => {
                 socket.emit("request_team_roster", { teamId: myTeamInState.id || myTeamInState.franchiseId });
             }
 
-            if (state.activePlayer) {
-                setCurrentPlayer(state.activePlayer);
-                currentPlayerRef.current = state.activePlayer;
+                const pName = state.activePlayer.name || state.activePlayer.player;
+                if (pName && LEGEND_METADATA[pName] && (!state.activeBid || state.activeBid.amount === 0)) {
+                    setLegendaryWelcome({
+                        ...state.activePlayer,
+                        ...LEGEND_METADATA[pName]
+                    });
+                    playLegendIntro();
+                    
+                    // DELAY: Update the podium behind the intro after 2.0s (mid-intro reveal)
+                    setTimeout(() => {
+                        setCurrentPlayer(state.activePlayer);
+                        currentPlayerRef.current = state.activePlayer;
+                        if (state.activeBid) setCurrentBid(state.activeBid);
+                    }, 2000);
+
+                    // Clear overlay after 5.0s (starts 2.0s fade-out, total 7s)
+                    setTimeout(() => {
+                        setLegendaryWelcome(null);
+                        stopLegendIntro();
+                    }, 5000);
+                } else {
+                    setCurrentPlayer(state.activePlayer);
+                    currentPlayerRef.current = state.activePlayer;
+                }
                 if (state.activeBid) setCurrentBid(state.activeBid);
-            }
             // Fallback for older server versions or edge cases
             else if (state.players && state.players.length > 0 && state.players[state.currentIndex]) {
                 setCurrentPlayer(state.players[state.currentIndex]);
@@ -273,28 +456,58 @@ const AuctionPodium = () => {
             }
         };
 
-        const handleNewPlayer = ({ player, nextPlayers, timer, skippedHistory: incomingSkipped }) => {
+        const handleNewPlayer = ({ player, nextPlayers, timer, skippedHistory: incomingSkipped, isInitial }) => {
             console.log("Received new_player sync!", player?.name);
-            setCurrentPlayer(player);
-            currentPlayerRef.current = player;
-            setTimer(timer);
-            setCurrentBid({
-                amount: 0,
-                teamId: null,
-                teamName: null,
-                teamColor: null,
-            });
+            
+            // Shared reset logic (history reset should be immediate to avoid stale data during intro)
             setSoldEvent(null);
             setBidHistory([]);
-            bidWarSentRef.current = false; // Reset war alert for the new player
+            bidWarSentRef.current = false;
             if (incomingSkipped) setSkippedHistory(incomingSkipped);
-
             if (nextPlayers) {
                 setUpcomingPlayers(nextPlayers);
                 nextPlayers.forEach(p => {
                     const url = p.imagepath || p.image_path || p.photoUrl;
                     if (url) new Image().src = url;
                 });
+            }
+
+            const finalizePlayerState = () => {
+                setCurrentPlayer(player);
+                currentPlayerRef.current = player;
+                setTimer(timer);
+                setCurrentBid({
+                    amount: 0,
+                    teamId: null,
+                    teamName: null,
+                    teamColor: null,
+                });
+            };
+
+            const pName = player?.name || player?.player;
+            const isLegend = pName && LEGEND_METADATA[pName] && !isInitial;
+
+            if (isLegend) {
+                // Trigger Legendary Welcome FIRST
+                setLegendaryWelcome({
+                    ...player,
+                    ...LEGEND_METADATA[pName]
+                });
+                playLegendIntro();
+                
+                // DELAY: Update the podium behind the intro after 2.0s (mid-intro reveal)
+                setTimeout(() => {
+                    finalizePlayerState();
+                }, 2000);
+                
+                // Clear overlay after 5.0s (starts 2.0s fade-out, total 7s)
+                setTimeout(() => {
+                    setLegendaryWelcome(null);
+                    stopLegendIntro();
+                }, 5000);
+            } else {
+                // Regular player: Update everything immediately
+                finalizePlayerState();
             }
         };
 
@@ -531,7 +744,12 @@ const AuctionPodium = () => {
         socket.on("settings_updated", handleSettingsUpdated);
         socket.on("host_changed", handleHostChanged);
         socket.on("auction_paused", () => setIsPaused(true));
-        socket.on("auction_resumed", () => setIsPaused(false));
+        socket.on("auction_resumed", (payload) => {
+            setIsPaused(false);
+            if (payload?.timer !== undefined) setTimer(payload.timer);
+            // Support legacy server version too (if it sent it as payload.state.timer)
+            else if (payload?.state?.timer !== undefined) setTimer(payload.state.timer);
+        });
         socket.on("cohosts_updated", handleCoHostsUpdated);
         socket.on("receive_chat_message", (msg) => setChatMessages(prev => [...prev.slice(-49), msg])); // Keep last 50 for performance
         socket.on("spectator_update", ({ spectators }) => setSpectators(spectators));
@@ -630,6 +848,9 @@ const AuctionPodium = () => {
     );
 
     const confirmLeaveRoom = () => {
+        if (isVoiceJoined) {
+            leaveVoice(roomCode);
+        }
         if (roomCode) {
             socket.emit("leave_room", { roomCode, playerName });
         }
@@ -709,6 +930,162 @@ const AuctionPodium = () => {
 
     return (
         <div className="flex flex-col lg:flex-row h-[100dvh] bg-[var(--dark-depth)] bg-sweeping-lines text-slate-100 font-sans selection:bg-yellow-500/30 overflow-hidden relative">
+            {/* Grand Welcome Overlay for Legends */}
+            <AnimatePresence>
+                {legendaryWelcome && (
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ 
+                            opacity: 0, 
+                            scale: 1.1,
+                            filter: "blur(40px)",
+                            transition: { duration: 2.0, ease: "easeInOut" }
+                        }}
+                        transition={{ duration: 1.2, ease: "easeOut" }}
+                        className="fixed inset-0 z-[1000] flex items-center justify-center bg-black overflow-hidden"
+                    >
+                        {/* 0. Initial Cinematic Flash */}
+                        <div className="absolute inset-0 z-50 pointer-events-none bg-white animate-cinematic-flash"></div>
+
+                        {/* 1. Cinematic Background Layers */}
+                        <div className="absolute inset-0 pointer-events-none animate-slow-zoom gpu-accelerated">
+                            {/* Base Dark Vignette */}
+                            <div className="absolute inset-0 bg-radial-vignette opacity-80"></div>
+                            
+                            {/* Animated Mesh / Grid */}
+                            <div className="absolute inset-0 bg-mesh-grid opacity-20 animate-mesh-slide"></div>
+
+                            {/* Dynamic Light Beams / Streaks (Offloaded to CSS for performance) */}
+                            <div className="absolute -inset-[100%] bg-gradient-to-r from-transparent via-white/5 to-transparent animate-light-beam-right" />
+                            <div className="absolute -inset-[100%] bg-gradient-to-r from-transparent via-white/5 to-transparent animate-light-beam-left" />
+                        </div>
+
+                        {/* 2. Core Aura Pulse */}
+                        <motion.div
+                            initial={{ scale: 0.8, opacity: 0 }}
+                            animate={{ 
+                                scale: [1.2, 1.8, 1.2], 
+                                opacity: [0.3, 0.6, 0.3] 
+                            }}
+                            transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
+                            className="absolute w-[80vw] h-[80vw] rounded-full blur-[150px] gpu-accelerated"
+                            style={{ background: legendaryWelcome.aura }}
+                        />
+
+                        {/* 3. Central Glass Reflection Backdrop */}
+                        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-white/5 rounded-full blur-3xl"></div>
+
+                        <div className="relative z-10 text-center space-y-8 px-6">
+                            <motion.div
+                                initial={{ y: 80, opacity: 0, filter: "blur(10px)" }}
+                                animate={{ y: 0, opacity: 1, filter: "blur(0px)" }}
+                                transition={{ delay: 0.3, duration: 1, ease: [0.22, 1, 0.36, 1] }}
+                                className="space-y-4"
+                            >
+                                <span className="text-xl sm:text-2xl font-black text-[#D4AF37] uppercase tracking-[0.8em] block drop-shadow-lg">
+                                    <span className="opacity-50">{legendaryWelcome.vibe}</span> PRESENTING <span className="opacity-50">{legendaryWelcome.vibe}</span>
+                                </span>
+                                <h2 className={`text-6xl sm:text-9xl font-black italic tracking-tighter uppercase leading-[0.8] bg-clip-text text-transparent bg-gradient-to-b ${legendaryWelcome.color} drop-shadow-[0_0_50px_rgba(255,255,255,0.2)] gpu-accelerated`}>
+                                    {legendaryWelcome.title}
+                                </h2>
+                            </motion.div>
+
+                            <motion.div
+                                initial={{ scale: 0.8, opacity: 0, filter: "blur(20px)" }}
+                                animate={{ scale: 1, opacity: 1, filter: "blur(0px)" }}
+                                transition={{ delay: 0.6, duration: 1.2, ease: [0.22, 1, 0.36, 1] }}
+                                className="flex flex-col items-center gap-8"
+                            >
+                                <div className="relative group p-4">
+                                    {/* Epic Glow Ring */}
+                                    <div className={`absolute -inset-8 bg-gradient-to-r ${legendaryWelcome.color} rounded-full blur-3xl opacity-30 animate-pulse`}></div>
+                                    
+                                    <div className="relative w-56 h-56 sm:w-72 sm:h-72 rounded-full border-[6px] border-[#D4AF37] overflow-hidden bg-black shadow-[0_0_80px_rgba(212,175,55,0.4)] gpu-accelerated">
+                                        <img
+                                            src={legendaryWelcome.imagepath || legendaryWelcome.image_path || legendaryWelcome.photoUrl}
+                                            alt={legendaryWelcome.name}
+                                            className="w-full h-full object-cover scale-110 group-hover:scale-125 transition-transform duration-1000 ease-out"
+                                        />
+                                    </div>
+
+                                    {/* Outer Decorative Rings */}
+                                    <motion.div 
+                                        animate={{ rotate: 360 }}
+                                        transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
+                                        className="absolute -inset-4 border border-dashed border-[#D4AF37]/30 rounded-full"
+                                    />
+                                    <motion.div 
+                                        animate={{ rotate: -360 }}
+                                        transition={{ duration: 15, repeat: Infinity, ease: "linear" }}
+                                        className="absolute -inset-10 border border-dotted border-[#D4AF37]/20 rounded-full"
+                                    />
+                                </div>
+
+                                <div className="space-y-2">
+                                    <h3 className="text-4xl sm:text-6xl font-black text-white uppercase tracking-tight drop-shadow-2xl">
+                                        {legendaryWelcome.name}
+                                    </h3>
+                                    <div className="flex items-center justify-center gap-3">
+                                        <div className="h-[2px] w-8 bg-[#D4AF37]/50 rounded-full"></div>
+                                        <p className="text-sm sm:text-lg font-black text-[#D4AF37] uppercase tracking-[0.4em] italic">
+                                            {legendaryWelcome.subtitle}
+                                        </p>
+                                        <div className="h-[2px] w-8 bg-[#D4AF37]/50 rounded-full"></div>
+                                    </div>
+                                </div>
+                            </motion.div>
+
+                            <motion.div
+                                initial={{ opacity: 0 }}
+                                animate={{ opacity: 1 }}
+                                transition={{ delay: 2.5, duration: 1 }}
+                                className="pt-12"
+                            >
+                                <div className="flex flex-col items-center gap-4">
+                                    <span className="text-[10px] font-black text-[#D4AF37]/60 uppercase tracking-[1.2em] mb-2 ml-[1.2em]">Battlefield Protocol Initiated</span>
+                                    <div className="relative w-40 h-[1px] bg-white/10 overflow-hidden">
+                                        <motion.div 
+                                            initial={{ x: "-100%" }}
+                                            animate={{ x: "100%" }}
+                                            transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+                                            className="absolute inset-0 bg-gradient-to-r from-transparent via-[#D4AF37] to-transparent"
+                                        />
+                                    </div>
+                                </div>
+                            </motion.div>
+                        </div>
+
+                        {/* 4. Optimized Particles */}
+                        {[...Array(18)].map((_, i) => (
+                            <motion.div
+                                key={`particle-${i}`}
+                                initial={{ 
+                                    opacity: 0, 
+                                    scale: 0,
+                                    x: (Math.random() - 0.5) * 1500,
+                                    y: (Math.random() - 0.5) * 1500
+                                }}
+                                animate={{
+                                    opacity: [0, 0.8, 0],
+                                    scale: [0, Math.random() * 1.5 + 0.5, 0],
+                                    y: [(Math.random() - 0.5) * 1500, (Math.random() - 0.5) * 1500 - 300]
+                                }}
+                                transition={{
+                                    duration: Math.random() * 4 + 4,
+                                    repeat: Infinity,
+                                    delay: Math.random() * 5
+                                }}
+                                className="absolute w-1 h-1 bg-white rounded-full gpu-accelerated"
+                                style={{ 
+                                    backgroundColor: legendaryWelcome.accent || '#FFFFFF',
+                                    filter: 'blur(1px)'
+                                }}
+                            />
+                        ))}
+                    </motion.div>
+                )}
+            </AnimatePresence>
             {/* Cinematic Background Elements */}
             <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden">
                 <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-yellow-600/10 blur-[150px] rounded-full"></div>
@@ -775,6 +1152,7 @@ const AuctionPodium = () => {
                         onKick={(sId, name) => setKickTarget({ socketId: sId, name })}
                         onToggleCoHost={handleToggleCoHost}
                         teamRosters={teamRosters}
+                        voiceParticipants={voiceParticipants}
                     />
                 </div>
             </div>
@@ -826,7 +1204,7 @@ const AuctionPodium = () => {
                                 >
                                     <Users className="w-3.5 h-3.5" />
                                 </button>
-                                {isPaused && (
+                                {isPaused && !legendaryWelcome && (
                                     <div className="flex items-center gap-1 px-1.5 py-0.5 sm:px-2 sm:py-1 bg-yellow-500/10 border border-yellow-500/20 rounded-full animate-pulse ml-1 sm:ml-2">
                                         <Pause className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-yellow-500 shrink-0" fill="currentColor" />
                                         <span className="hidden sm:inline lg:hidden text-[8px] font-black uppercase tracking-widest text-yellow-500">Paused</span>
@@ -836,134 +1214,166 @@ const AuctionPodium = () => {
                             </div>
                         </div>
 
+                        {/* Right Side: Voice Connection & Host Controls */}
                         <div className="flex items-center gap-2 sm:gap-4">
-                            {isModerator && joinRequests.length > 0 && (
+                            {/* Voice Controls (Compact on Mobile) */}
+                            {isVoiceJoined ? (
+                              <div className="flex items-center gap-1.5 p-1 bg-emerald-500/10 border border-emerald-500/20 rounded-full lg:rounded-xl">
                                 <button
-                                    onClick={() => setShowHostRequests(true)}
-                                    className="flex items-center gap-2 px-3 py-1.5 bg-yellow-500/10 border border-yellow-500/20 text-yellow-500 rounded-full hover:bg-yellow-500/20 transition-all shadow-[0_0_10px_rgba(234,179,8,0.2)]"
+                                    onClick={toggleMute}
+                                    className={`p-2.5 rounded-full border transition-all flex items-center justify-center ${isVoiceMuted ? 'bg-red-500/10 border-red-500/30 text-red-500' : 'bg-sky-500 border-sky-400 text-[#080400] animate-pulse shadow-[0_0_15px_rgba(14,165,233,0.5)]'}`}
+                                    title={isVoiceMuted ? "Unmute Microphone" : "Mute Microphone"}
                                 >
-                                    <span className="w-2 h-2 rounded-full bg-yellow-500 animate-pulse"></span>
-                                    <span className="text-[10px] sm:text-xs font-black uppercase tracking-widest hidden sm:inline">
-                                        {joinRequests.length} Requests
-                                    </span>
-                                    <span className="text-[10px] sm:text-xs font-black uppercase tracking-widest sm:hidden">
-                                        {joinRequests.length}
-                                    </span>
+                                    {isVoiceMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+                                </button>
+                                <button
+                                    onClick={() => leaveVoice(roomCode)}
+                                    className="p-2.5 rounded-full bg-red-500 border border-red-400 text-white shadow-[0_0_10px_rgba(239,68,68,0.3)] hover:bg-red-600 transition-all flex items-center justify-center"
+                                    title="Exit Voice Chat"
+                                >
+                                    <Phone className="w-4 h-4" />
+                                </button>
+                                <div className="px-2 py-0.5 bg-sky-500/5 rounded-full hidden lg:flex items-center gap-1">
+                                    <div className="w-1 h-1 rounded-full bg-sky-500 animate-pulse shadow-[0_0_5px_#38bdf8]"></div>
+                                    <span className="text-[7px] font-black text-sky-500 uppercase tracking-widest">In Voice</span>
+                                </div>
+                              </div>
+                            ) : (
+                                <button
+                                    onClick={() => joinVoice(roomCode)}
+                                    className="p-2 sm:p-2.5 bg-yellow-500/10 border border-yellow-500/30 text-yellow-500 rounded-full hover:bg-yellow-500/20 transition-all flex items-center justify-center shadow-md"
+                                    title="Join Voice Chat"
+                                >
+                                    <Phone className="w-4 h-4" />
                                 </button>
                             )}
+                            
+                            {/* Host Controls Block */}
                             {isModerator && (
-                                <div className="flex items-center gap-1.5 p-1 glass-panel rounded-xl">
-                                    {isModerator && (
-                                        (() => {
-                                            const allTeamsReached15 = activeTeams.every(t => (t.playersAcquired || []).length >= 15);
-                                            const hasPool34Remaining = upcomingPlayers.some(p => ['pool3', 'pool4'].includes(p.poolID));
-                                            
-                                            // Only show the button if there are Pool 3/4 players left
-                                            if (!hasPool34Remaining) return null;
-
-                                            return (
-                                                <button
-                                                    onClick={() => {
-                                                        if (allTeamsReached15) {
-                                                            socket.emit("start_interest_voting", { roomCode });
-                                                        } else {
-                                                            setToast({ 
-                                                                message: "Accelerated phase requires all teams to have at least 15 players.", 
-                                                                type: "warning" 
-                                                            });
-                                                        }
-                                                    }}
-                                                    className={`p-2 lg:p-2.5 rounded-full transition-all flex items-center justify-center border ${
-                                                        allTeamsReached15 
-                                                            ? "bg-yellow-500/10 border-yellow-500/30 text-yellow-500 hover:bg-yellow-500/20 shadow-[0_0_10px_rgba(234,179,8,0.1)]"
-                                                            : "bg-white/5 border-white/10 text-white/20 cursor-not-allowed"
-                                                    }`}
-                                                    title={allTeamsReached15 ? "Start Accelerated Interest Voting (Pool 3 & 4)" : "Waiting for all teams to reach 15 players..."}
-                                                >
-                                                    <ListChecks className="w-4 h-4" />
-                                                </button>
-                                            );
-                                        })()
-                                    )}
-                                    <button
-                                        onClick={() =>
-                                            socket.emit(
-                                                isPaused ? "resume_auction" : "pause_auction",
-                                                { roomCode },
-                                            )
-                                        }
-                                        className={`p-2 lg:p-2.5 rounded-full transition-all flex items-center justify-center border ${isPaused ? "bg-yellow-500 border-yellow-400 text-[#080400] shadow-[0_0_15px_rgba(234,179,8,0.4)]" : "bg-yellow-500/10 border-yellow-500/30 text-yellow-500 hover:bg-yellow-500/20 shadow-[0_0_10px_rgba(234,179,8,0.1)]"}`}
-                                        title={isPaused ? "Resume Auction" : "Pause Auction"}
-                                    >
-                                        {isPaused ? (
-                                            <Play className="w-4 h-4" fill="currentColor" />
-                                        ) : (
-                                            <Pause className="w-4 h-4" fill="currentColor" />
-                                        )}
-                                    </button>
-                                    <button
-                                        onClick={() => setShowForceEndConfirm(true)}
-                                        className="p-2 lg:p-2.5 rounded-full bg-yellow-500/10 border border-yellow-500/30 text-yellow-500 hover:bg-red-500/20 hover:text-red-500 hover:border-red-500/30 transition-all flex items-center justify-center shadow-[0_0_10px_rgba(234,179,8,0.1)]"
-                                        title="Force End Auction"
-                                    >
-                                        <Square className="w-4 h-4" fill="currentColor" />
-                                    </button>
-
-                                    {/* AI Mode Skip Controls */}
-                                    {gameState?.isAiMode && isPrimaryHost && (
-                                        <>
-                                            <button
-                                                onClick={() => socket.emit("skip_player", { roomCode })}
-                                                className="p-2 lg:p-2.5 rounded-full bg-orange-500/10 border border-orange-500/30 text-orange-500 hover:bg-orange-500/20 transition-all flex items-center justify-center shadow-[0_0_10px_rgba(249,115,22,0.1)]"
-                                                title="Skip Current Player (AI Mode)"
-                                            >
-                                                <SkipForward className="w-4 h-4" />
-                                            </button>
-                                            <button
-                                                onClick={() => {
-                                                    if (window.confirm("Are you sure you want to skip the entire current pool?")) {
-                                                        socket.emit("skip_pool", { roomCode });
-                                                    }
-                                                }}
-                                                className="p-2 lg:p-2.5 rounded-full bg-red-500/10 border border-red-500/30 text-red-500 hover:bg-red-500/20 transition-all flex items-center justify-center shadow-[0_0_10px_rgba(239,68,68,0.1)]"
-                                                title="Skip Current Pool (AI Mode)"
-                                            >
-                                                <FastForward className="w-4 h-4" />
-                                            </button>
-                                        </>
-                                    )}
-                                    {/* Timer Settings */}
-                                    <div className="relative">
+                                <div className="flex items-center gap-1.5 p-1 glass-panel rounded-full lg:rounded-xl border border-[#D4AF37]/20">
+                                    {/* Timer & Host Settings Dropdown */}
+                                    <div className="relative ml-1">
                                         <button
                                             onClick={() => setShowTimerSettings(v => !v)}
-                                            className={`p-2 lg:p-2.5 rounded-full transition-all flex items-center justify-center border ${showTimerSettings ? 'bg-yellow-500 border-yellow-400 text-[#080400] shadow-[0_0_15px_rgba(234,179,8,0.4)]' : 'bg-yellow-500/10 border-yellow-500/30 text-yellow-500 hover:bg-yellow-500/20 shadow-[0_0_10px_rgba(234,179,8,0.1)]'}`}
-                                            title="Timer Settings"
+                                            className={`p-1.5 rounded-full transition-all flex items-center justify-center border ${showTimerSettings ? 'bg-yellow-700/50 border-yellow-500 shadow-[0_0_15px_rgba(234,179,8,0.3)]' : 'bg-transparent border-transparent text-yellow-500/60 hover:bg-white/5 hover:text-white'}`}
+                                            title="Auction Settings"
                                         >
                                             <Settings className="w-4 h-4" />
                                         </button>
+                                        
                                         {showTimerSettings && (
-                                            <div className="absolute right-0 top-full mt-2 z-[300] bg-[#1a1205] border border-[#D4AF37]/20 rounded-2xl p-3 shadow-2xl min-w-[140px]">
-                                                <div className="text-[9px] font-black text-[#D4AF37]/40 uppercase tracking-widest mb-2 px-1">Bid Timer</div>
-                                                {[3, 5, 7, 10].map(sec => (
+                                            <div className="absolute right-0 top-full mt-3 z-[100] bg-[#1a1205]/95 backdrop-blur-xl border border-yellow-500/30 rounded-2xl p-2 shadow-2xl min-w-[160px] overflow-hidden animate-in fade-in zoom-in duration-200">
+                                                {/* Auction State Controls */}
+                                                <div className="text-[8px] font-black text-yellow-500/40 uppercase tracking-widest mb-2 px-2">Auction Control</div>
+                                                <div className="grid grid-cols-2 gap-1 mb-3 px-1">
                                                     <button
-                                                        key={sec}
                                                         onClick={() => {
-                                                            socket.emit('update_settings', { roomCode, timerDuration: sec });
-                                                            setCurrentTimerDuration(sec);
+                                                            socket.emit(isPaused ? "resume_auction" : "pause_auction", { roomCode });
                                                             setShowTimerSettings(false);
                                                         }}
-                                                        className={`w-full text-left px-3 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all mb-1 ${currentTimerDuration === sec
-                                                            ? 'bg-[#D4AF37] text-[#1a1205] shadow-[0_0_10px_rgba(212,175,55,0.4)]'
-                                                            : 'text-[#FFE58F]/60 hover:bg-white/5'
-                                                            }`}
+                                                        className={`flex flex-col items-center justify-center gap-1 p-2 rounded-xl border transition-all ${isPaused ? "bg-yellow-500 border-yellow-400 text-[#080400]" : "bg-white/5 border-white/10 text-yellow-500 hover:bg-yellow-500/10"}`}
                                                     >
-                                                        {sec}s {currentTimerDuration === sec ? '✓' : ''}
+                                                        {isPaused ? <Play className="w-3.5 h-3.5" fill="currentColor" /> : <Pause className="w-3.5 h-3.5" fill="currentColor" />}
+                                                        <span className="text-[7px] font-black uppercase text-center">{isPaused ? "Resume" : "Pause"}</span>
                                                     </button>
-                                                ))}
+                                                    <button
+                                                        onClick={() => {
+                                                            setShowForceEndConfirm(true);
+                                                            setShowTimerSettings(false);
+                                                        }}
+                                                        className="flex flex-col items-center justify-center gap-1 p-2 rounded-xl bg-red-500/10 border border-red-500/20 text-red-500 hover:bg-red-500 hover:text-white transition-all"
+                                                    >
+                                                        <Square className="w-3.5 h-3.5" fill="currentColor" />
+                                                        <span className="text-[7px] font-black uppercase">End</span>
+                                                    </button>
+                                                </div>
+
+                                                {/* Accelerated Phase Control */}
+                                                {(() => {
+                                                    const allTeamsReached15 = activeTeams.every(t => (t.playersAcquired || []).length >= 15);
+                                                    const hasPool34Remaining = upcomingPlayers.some(p => ['pool3', 'pool4'].includes(p.poolID));
+                                                    if (!hasPool34Remaining) return null;
+                                                    return (
+                                                        <button
+                                                            onClick={() => {
+                                                                if (allTeamsReached15) {
+                                                                    socket.emit("start_interest_voting", { roomCode });
+                                                                    setShowTimerSettings(false);
+                                                                } else {
+                                                                    setToast({ message: "Accelerated phase requires all teams to have 15 players.", type: "warning" });
+                                                                }
+                                                            }}
+                                                            className={`w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl border transition-all mb-3 ${allTeamsReached15 ? "bg-yellow-500/10 border-yellow-500/30 text-yellow-500 hover:bg-yellow-500/20" : "bg-white/5 border-white/10 text-white/20 cursor-not-allowed"}`}
+                                                        >
+                                                            <ListChecks className="w-3.5 h-3.5" />
+                                                            <span className="text-[8px] font-black uppercase tracking-wider">Accelerated Phase</span>
+                                                        </button>
+                                                    );
+                                                })()}
+
+                                                {/* Bot Mode Controls */}
+                                                {gameState?.isAiMode && isPrimaryHost && (
+                                                    <div className="px-1 mb-3">
+                                                        <div className="text-[8px] font-black text-orange-500/40 uppercase tracking-widest mb-2 px-1">AI Mode Skip</div>
+                                                        <div className="grid grid-cols-2 gap-1">
+                                                            <button
+                                                                onClick={() => {
+                                                                    socket.emit("skip_player", { roomCode });
+                                                                    setShowTimerSettings(false);
+                                                                }}
+                                                                className="flex items-center justify-center gap-1.5 p-2 rounded-xl bg-orange-500/10 border border-orange-500/20 text-orange-500 hover:bg-orange-500 hover:text-white transition-all group"
+                                                            >
+                                                                <SkipForward className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
+                                                                <span className="text-[7px] font-black uppercase">Player</span>
+                                                            </button>
+                                                            <button
+                                                                onClick={() => {
+                                                                    if (window.confirm("Skip current pool?")) {
+                                                                        socket.emit("skip_pool", { roomCode });
+                                                                        setShowTimerSettings(false);
+                                                                    }
+                                                                }}
+                                                                className="flex items-center justify-center gap-1.5 p-2 rounded-xl bg-red-500/10 border border-red-500/20 text-red-500 hover:bg-red-500 hover:text-white transition-all group"
+                                                            >
+                                                                <FastForward className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
+                                                                <span className="text-[7px] font-black uppercase">Pool</span>
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                )}
+
+                                                <div className="h-px bg-white/10 mx-2 mb-2"></div>
+                                                
+                                                <div className="text-[8px] font-black text-yellow-500/40 uppercase tracking-widest mb-2 px-2">Timer Config</div>
+                                                <div className="grid grid-cols-2 gap-1 px-1 pb-1">
+                                                    {[3, 5, 7, 10].map(sec => (
+                                                        <button
+                                                            key={sec}
+                                                            onClick={() => {
+                                                                socket.emit('update_settings', { roomCode, timerDuration: sec });
+                                                                setCurrentTimerDuration(sec);
+                                                                setShowTimerSettings(false);
+                                                            }}
+                                                            className={`text-center px-1 py-2 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${currentTimerDuration === sec ? 'bg-yellow-500 text-black shadow-[0_0_10px_rgba(234,179,8,0.3)]' : 'text-yellow-500/60 hover:bg-white/10'}`}
+                                                        >
+                                                            {sec}s
+                                                        </button>
+                                                    ))}
+                                                </div>
                                             </div>
                                         )}
                                     </div>
                                 </div>
+                            )}
+
+                            {isModerator && joinRequests.length > 0 && (
+                                <button
+                                    onClick={() => setShowHostRequests(true)}
+                                    className="p-1.5 px-3 bg-yellow-500/10 border border-yellow-500/30 text-yellow-500 rounded-full hover:bg-yellow-500/20 transition-all flex items-center gap-2 shadow-[0_0_10px_rgba(234,179,8,0.1)]"
+                                >
+                                    <div className="w-1.5 h-1.5 rounded-full bg-yellow-500 animate-pulse"></div>
+                                    <span className="text-[9px] font-black uppercase tracking-widest hidden sm:inline">{joinRequests.length} Req</span>
+                                </button>
                             )}
                         </div>
                     </div>
@@ -1142,7 +1552,7 @@ const AuctionPodium = () => {
                 )}
 
                 <div className="flex-1 flex flex-col items-center justify-evenly lg:justify-center p-2 pt-2 sm:p-4 sm:pt-8 md:p-8 lg:p-12 z-10 overflow-hidden lg:overflow-y-auto custom-scrollbar relative w-full sm:pt-12 lg:pt-0">
-                    <AnimatePresence mode="wait">
+                    <AnimatePresence>
                         {!currentPlayer ? (
                             <motion.div
                                 initial={{ opacity: 0 }}
@@ -1889,67 +2299,11 @@ const AuctionPodium = () => {
                 )}
             </AnimatePresence>
 
-            {/* Toast Notification Modal */}
-            <AnimatePresence>
-                {toast && (
-                    <motion.div
-                        initial={{ opacity: 0, y: -20, scale: 0.95 }}
-                        animate={{ opacity: 1, y: 0, scale: 1 }}
-                        exit={{ opacity: 0, y: -20, scale: 0.95 }}
-                        onClick={() => setToast(null)}
-                        className="fixed top-4 left-1/2 -translate-x-1/2 z-[300] w-[calc(100%-2rem)] max-w-sm cursor-pointer"
-                    >
-                        <div
-                            className={`flex items-center gap-2 sm:gap-3 p-2.5 sm:p-4 rounded-xl sm:rounded-2xl border shadow-2xl backdrop-blur-xl ${
-                                toast.type === "error"
-                                ? "bg-red-500/20 border-red-500/30"
-                                : toast.type === "warning"
-                                    ? "bg-yellow-500/20 border-yellow-500/30 text-yellow-500"
-                                    : "bg-yellow-400/20 border-yellow-400/30 text-yellow-400"
-                                }`}
-                        >
-                            {/* Icon */}
-                            <div
-                                className={`shrink-0 w-7 h-7 sm:w-10 sm:h-10 rounded-full flex items-center justify-center ${
-                                    toast.type === "error"
-                                    ? "bg-red-500/30"
-                                    : toast.type === "warning"
-                                        ? "bg-yellow-500/30"
-                                        : "bg-yellow-400/30"
-                                    }`}
-                            >
-                                {toast.type === "error" ? (
-                                    <X className="w-3.5 h-3.5 sm:w-5 sm:h-5 text-red-500" />
-                                ) : toast.type === "success" ? (
-                                    <svg className="w-3.5 h-3.5 sm:w-5 sm:h-5 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" />
-                                    </svg>
-                                ) : (
-                                    <AlertTriangle className="w-3.5 h-3.5 sm:w-5 sm:h-5 text-yellow-500" />
-                                )}
-                            </div>
-
-                            {/* Message */}
-                            <div className="flex-1 min-w-0">
-                                <p className={`text-[10px] sm:text-sm font-black leading-tight tracking-tight uppercase ${
-                                    toast.type === "error" ? "text-red-400" : "text-yellow-50"
-                                }`}>
-                                    {toast.message}
-                                </p>
-                            </div>
-
-                            {/* Large Hit Area Close Button */}
-                            <button
-                                onClick={(e) => { e.stopPropagation(); setToast(null); }}
-                                className="shrink-0 -mr-1 min-w-[44px] min-h-[44px] flex items-center justify-center active:scale-95 transition-all text-white/60"
-                                aria-label="Close notification"
-                            >
-                                <X className="w-5 h-5" />
-                            </button>
-                        </div>
-                    </motion.div>
-                )}
-            </AnimatePresence>
+            <Toast
+                message={toast?.message}
+                type={toast?.type}
+                onClose={() => setToast(null)}
+            />
 
             {/* Leave Confirmation Modal */}
             {/* Kick Confirmation Modal */}

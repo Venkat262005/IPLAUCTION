@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 const PublicRooms = () => {
   const [publicRooms, setPublicRooms] = useState([]);
   const [playerName, setPlayerName] = useState(
-    localStorage.getItem("playerName") || "",
+    sessionStorage.getItem("playerName") || "",
   );
   const [error, setError] = useState("");
 
@@ -32,7 +32,7 @@ const PublicRooms = () => {
       setError("Please enter your name first!");
       return;
     }
-    localStorage.setItem("playerName", playerName);
+    sessionStorage.setItem("playerName", playerName);
     navigate("/", { state: { autoJoinRoomCode: roomCode } });
   };
 
@@ -41,7 +41,7 @@ const PublicRooms = () => {
       setError("Please enter your name first!");
       return;
     }
-    localStorage.setItem("playerName", playerName);
+    sessionStorage.setItem("playerName", playerName);
     navigate("/", { state: { autoSpectateRoomCode: roomCode } });
   };
 

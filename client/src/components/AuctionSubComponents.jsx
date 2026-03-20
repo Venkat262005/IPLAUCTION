@@ -17,7 +17,8 @@ const TeamRow = memo(({
   mySocketId,
   onKick,
   onToggleCoHost,
-  roster = [] // New prop: lazy-loaded players
+  roster = [], // New prop: lazy-loaded players
+  voiceParticipants = new Set()
 }) => {
   const isExpanded = expandedTeamId === t.franchiseId;
   const isActive = currentBidTeamId === t.franchiseId;
@@ -90,6 +91,15 @@ const TeamRow = memo(({
               {t.ownerName}
               {(mySocketId && (t.ownerSocketId === mySocketId || t.ownerUserId === mySocketId)) ? "(You)" : ""}
               {t.isHost ? "(Host)" : coHostUserIds.includes(t.ownerUserId) ? "(Co-Host)" : ""}
+              {t.ownerSocketId && voiceParticipants?.has(t.ownerSocketId) && (
+                <span className="ml-1 text-emerald-500 animate-pulse" title="In Voice Chat">
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+                    <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                    <line x1="12" y1="19" x2="12" y2="22" />
+                  </svg>
+                </span>
+              )}
             </span>
           </div>
         </div>
@@ -213,6 +223,7 @@ export const TeamList = memo(
     onKick = null,
     onToggleCoHost = null,
     teamRosters = {},
+    voiceParticipants = new Set(),
   }) => (
     <div className="flex-1 overflow-y-auto px-4 pb-8 space-y-3 custom-scrollbar">
       {teams.map((t, i) => (
@@ -232,6 +243,7 @@ export const TeamList = memo(
           mySocketId={mySocketId}
           onKick={onKick}
           onToggleCoHost={onToggleCoHost}
+          voiceParticipants={voiceParticipants}
         />
       ))}
     </div>

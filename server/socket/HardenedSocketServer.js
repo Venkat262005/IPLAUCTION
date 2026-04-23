@@ -18,7 +18,9 @@ const initHardenedSocket = (server) => {
         // Allow polling + websocket: polling is required for Vite dev proxy HTTP → WS upgrade
         transports: ['polling', 'websocket'],
         perMessageDeflate: { threshold: 1024 },
-        maxHttpBufferSize: 1e5,
+        maxHttpBufferSize: 5e6, // 5MB limit
+        pingTimeout: 20000,
+        upgradeTimeout: 20000,
         allowEIO3: true
     });
 

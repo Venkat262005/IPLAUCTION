@@ -36,27 +36,9 @@ const attachListeners = (io, socket) => {
         }
     });
 
-    // 2. Bidding (The Hot Path)
-    socket.on('place_bid', ({ amount, requestId }) => {
-        if (!socket.roomCode) return;
-
-        // 🛡️ Per-User Throttle (200ms) - Prevent Bot/Human Spam
-        const now = Date.now();
-        if (socket.lastBid && now - socket.lastBid < 200) return;
-        socket.lastBid = now;
-
-        // O(1) Idempotency Check
-        if (Idempotency.isDuplicate(requestId)) return;
-
-        AuctionEngine.processBid(
-            socket.roomCode,
-            socket.id,
-            socket.userId,
-            amount,
-            io,
-            requestId
-        );
-    });
+    // NOTE: place_bid is handled directly in auctionEngine.js which has full
+    // validation, state access, and correct roomCode resolution. Do NOT add a
+    // duplicate handler here — it would intercept and silently drop all bids.
 
     // 3. State Transitions
     socket.on('start_auction', () => {

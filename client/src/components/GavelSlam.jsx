@@ -11,30 +11,50 @@ const GavelSlam = ({ type, teamName, teamColor, teamLogo, playerName, winningBid
 
         if (type === 'SOLD') {
             const timer = setTimeout(() => {
-                const end = Date.now() + 3000;
-                const colors = [teamColor || '#ffffff', '#ffffff', '#ffcc33'];
+                const colors = [teamColor || '#ffffff', '#FFD700', '#FFEA00', '#FFA500'];
+                
+                // 1. Massive central explosion
+                confetti({
+                    particleCount: 200,
+                    spread: 160,
+                    origin: { y: 0.5 },
+                    colors: colors,
+                    startVelocity: 50,
+                    gravity: 0.8,
+                    shapes: ['circle', 'square']
+                });
 
+                // 2. Secondary burst of stars
+                setTimeout(() => {
+                    confetti({
+                        particleCount: 100,
+                        spread: 120,
+                        origin: { y: 0.5 },
+                        colors: ['#FFD700', '#ffffff'],
+                        startVelocity: 40,
+                        gravity: 0.5,
+                        shapes: ['star'],
+                        scalar: 1.2
+                    });
+                }, 250);
+
+                // 3. Falling team-colored confetti from top
+                const duration = 2500;
+                const end = Date.now() + duration;
                 (function frame() {
                     confetti({
-                        particleCount: 3,
-                        angle: 60,
-                        spread: 55,
-                        origin: { x: 0 },
-                        colors: colors
+                        particleCount: 4,
+                        angle: 270,
+                        spread: 180,
+                        origin: { x: Math.random(), y: -0.1 },
+                        startVelocity: Math.random() * 20 + 20,
+                        colors: [teamColor || '#ffffff', '#FFD700']
                     });
-                    confetti({
-                        particleCount: 3,
-                        angle: 120,
-                        spread: 55,
-                        origin: { x: 1 },
-                        colors: colors
-                    });
-
                     if (Date.now() < end) {
                         requestAnimationFrame(frame);
                     }
                 }());
-            }, 500);
+            }, 300);
             return () => clearTimeout(timer);
         }
     }, [type, teamColor, teamName]);

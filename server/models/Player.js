@@ -11,6 +11,7 @@ const playerSchema = new mongoose.Schema({
   photoUrl: { type: String },
   imagepath: { type: String },
   image_path: { type: String },
+  points: { type: Number, default: 0 },
   poolName: { type: String },
   stats: {
     matches: { type: Number, default: 0 },

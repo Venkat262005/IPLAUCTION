@@ -1,6 +1,8 @@
 const Room = require('../models/Room');
 const Player = require('../models/Player');
 const AuctionRoom = require('../models/AuctionRoom');
+const ActiveRoom = require('../models/ActiveRoom');
+const CompletedRoom = require('../models/CompletedRoom');
 const Franchise = require('../models/Franchise');
 const AuctionTransaction = require('../models/AuctionTransaction');
 const mongoose = require('mongoose');
@@ -207,6 +209,25 @@ function isModerator(state, socketId, userId) {
     return isPrimary || isCoHost;
 }
 
+// Helper to emit consistent, full state to all room participants
+async function emitFullAuctionState(roomCode, io) {
+    const state = roomStates[roomCode];
+    if (!state) return;
+
+    const remainingTime = calculateRemainingTime(state);
+
+    io.to(roomCode).emit('auction_state_sync', {
+        status: state.status,
+        currentIndex: state.currentIndex,
+        currentPlayer: state.currentPlayer,
+        currentBid: state.currentBid,
+        timer: Math.max(0, remainingTime),
+        timerDuration: state.timerDuration,
+        teams: lightweightTeams(state.teams),
+        last5Bids: state.last5Bids || []
+    });
+}
+
 function generateRoomCode() {
     return Math.floor(100000 + Math.random() * 900000).toString();
 }
@@ -214,50 +235,154 @@ function generateRoomCode() {
 async function rehydrateRoomState(roomCode) {
     console.log(`[SESSION] Attempting re-hydration for room ${roomCode}...`);
     try {
-        const roomDoc = await AuctionRoom.findOne({ roomId: roomCode }).lean();
+        // Try ActiveRoom first (new fault-tolerant model)
+        let roomDoc = await ActiveRoom.findOne({ roomCode }).lean();
+        
+        // Fallback to legacy AuctionRoom if not found in ActiveRoom yet
+        if (!roomDoc) {
+            roomDoc = await AuctionRoom.findOne({ roomId: roomCode }).lean();
+            if (roomDoc) {
+                console.log(`[SESSION] Converting legacy AuctionRoom ${roomCode} to ActiveRoom...`);
+                // Initialize ActiveRoom from legacy data
+                roomDoc = await ActiveRoom.create({
+                    roomCode: roomDoc.roomId,
+                    purseLimit: roomDoc.purseLimit,
+                    isAiMode: roomDoc.isAiMode,
+                    teamCount: roomDoc.teamCount || (roomDoc.franchisesInRoom || []).length,
+                    hostUserId: roomDoc.hostUserId,
+                    coHostUserIds: roomDoc.coHostUserIds || [],
+                    teams: (roomDoc.franchisesInRoom || []).map(t => ({
+                        franchiseId: t.franchiseId,
+                        teamName: t.teamName,
+                        teamThemeColor: t.teamThemeColor,
+                        teamLogo: t.logoUrl, // Mapped from logoUrl in AuctionRoom
+                        ownerUserId: t.ownerUserId,
+                        ownerSocketId: t.ownerSocketId,
+                        currentPurse: t.currentPurse,
+                        isBot: !!t.isBot
+                    })),
+                    auctionStatus: roomDoc.status === 'Auctioning' ? 'ONGOING' : roomDoc.status,
+                    currentIndex: roomDoc.currentPlayerIndex
+                });
+            }
+        }
+
         if (!roomDoc) {
             console.warn(`[SESSION] Re-hydration failed: Room ${roomCode} not found in DB`);
             return null;
         }
 
         const allPlayers = await fetchAllPlayers();
-        const teams = (roomDoc.franchisesInRoom || []).map(t => ({
-            ...t,
-            id: t.franchiseId,
-            playersAcquired: t.playersAcquired || []
-        }));
-
+        
         roomStates[roomCode] = {
-            roomCode: roomDoc.roomId,
+            roomCode: roomDoc.roomCode || roomDoc.roomId,
             roomType: roomDoc.type || 'private',
-            isAiMode: roomDoc.isAiMode || false, // [NEW] Restore AI mode flag
-            host: roomDoc.hostSocketId,
-            hostName: roomDoc.hostName || 'Host',
+            isAiMode: roomDoc.isAiMode || false,
             hostUserId: roomDoc.hostUserId,
-            status: roomDoc.status || 'Lobby',
+            status: roomDoc.auctionStatus || roomDoc.status || 'Lobby',
             players: allPlayers,
-            currentIndex: roomDoc.currentPlayerIndex || 0,
-            teams: teams,
+            currentIndex: roomDoc.currentIndex || roomDoc.currentPlayerIndex || 0,
+            teams: roomDoc.teams || [],
             spectators: [],
             joinRequests: [],
-            availableTeams: roomDoc.availableTeams || [],
             coHostUserIds: roomDoc.coHostUserIds || [],
-            currentBid: {
+            currentBid: roomDoc.currentBid || {
                 amount: roomDoc.currentBidAmount || 0,
                 teamId: roomDoc.highestBidderTeamId,
                 teamName: null
             },
+            currentPlayer: roomDoc.currentPlayer || null,
             timer: 0,
-            timerDuration: roomDoc.purseLimit === 12000 ? 10 : 15,
+            timerDuration: roomDoc.timerDuration || (roomDoc.purseLimit === 12000 ? 10 : 15),
+            lastBidTime: roomDoc.lastBidTime || new Date(),
             isReAuctionRound: false,
-            unsoldHistory: []
+            unsoldHistory: roomDoc.unsoldHistory || []
         };
 
-        console.log(`[SESSION] Room ${roomCode} re-hydrated successfully.`);
+        console.log(`[SESSION] Room ${roomCode} re-hydrated successfully. Status: ${roomStates[roomCode].status}`);
         return roomStates[roomCode];
     } catch (err) {
         console.error(`[SESSION] Re-hydration error for ${roomCode}:`, err);
         return null;
+    }
+}
+
+/**
+ * calculateRemainingTime — Recovers timer from DB timestamps
+ */
+function calculateRemainingTime(state) {
+    if (!state) return 0;
+    const now = Date.now();
+    // Bug 5 fix: prefer timerEndsAt (set on every bid/resume/load) over
+    // lastBidTime-based calculation which diverges after pauses/resumes.
+    if (state.timerEndsAt) {
+        return Math.ceil((state.timerEndsAt - now) / 1000);
+    }
+    // Legacy fallback for re-hydrated rooms that only have lastBidTime
+    if (!state.lastBidTime) return 0;
+    const lastBid = new Date(state.lastBidTime).getTime();
+    const elapsed = (now - lastBid) / 1000;
+    return Math.ceil(state.timerDuration - elapsed);
+}
+
+/**
+ * resumeAuction — Safely restarts an auction room's loop (survive server restart)
+ */
+function resumeAuction(roomCode, io) {
+    const state = roomStates[roomCode];
+    if (!state || state.status !== 'ONGOING') return;
+
+    // Prevent duplicate timers
+    if (roomTimers[roomCode]) {
+        clearInterval(roomTimers[roomCode]);
+        delete roomTimers[roomCode];
+    }
+
+    const remaining = calculateRemainingTime(state);
+    console.log(`[RESUME] Room ${roomCode} resuming with ${remaining}s left on ${state.currentPlayer?.name || 'unknown player'}`);
+    
+    state.timer = remaining;
+    
+    if (state.timer <= 0) {
+        console.log(`[RESUME] Room ${roomCode} finalize immediately (timer expired).`);
+        processHammerDown(roomCode, io);
+        return;
+    }
+
+    // Set DB lock
+    ActiveRoom.updateOne({ roomCode }, { $set: { isTimerRunning: true } }).exec();
+
+    roomTimers[roomCode] = setInterval(() => tickAuctionTimer(roomCode, io), 1000);
+}
+
+/**
+ * persistActiveState — Efficiently saves core auction state to MongoDB
+ */
+async function persistActiveState(roomCode) {
+    const state = roomStates[roomCode];
+    if (!state) return;
+
+    try {
+        await ActiveRoom.findOneAndUpdate(
+            { roomCode },
+            {
+                $set: {
+                    auctionStatus: state.status,
+                    currentIndex: state.currentIndex,
+                    currentPlayer: state.currentPlayer,
+                    currentBid: state.currentBid,
+                    timerDuration: state.timerDuration,
+                    lastBidTime: state.lastBidTime,
+                    hostUserId: state.hostUserId,
+                    coHostUserIds: state.coHostUserIds,
+                    unsoldHistory: state.unsoldHistory, // Preserve top unsold list
+                    teams: state.teams // Sync purses/acquired updates
+                }
+            },
+            { upsert: true }
+        );
+    } catch (err) {
+        console.error(`[DB] Failed to persist active state for ${roomCode}:`, err.message);
     }
 }
 
@@ -266,8 +391,8 @@ function ensureArray(val) {
     if (!val) return [];
     if (typeof val === 'object') return Object.values(val);
     if (typeof val === 'string') {
-        if (val.includes(',')) return val.split(',').map(v => v.trim());
-        return [val.trim()];
+        if (val.includes(',') && !val.trim().startsWith('http')) return val.split(',').map(v => v.trim());
+        return [val];
     }
     return [String(val)];
 }
@@ -301,11 +426,17 @@ async function handleAuctionEndTransition(roomCode, io) {
         clearInterval(roomTimers[roomCode]);
         delete roomTimers[roomCode];
     }
+    
+    // Clear any active end requests so the UI unsticks
+    if (state.endRequest) {
+        delete state.endRequest;
+        io.to(roomCode).emit('auction_end_cancelled');
+    }
 
     // [NEW] AI Mode Bypass: Skip interest voting and re-auction rounds
     if (state.isAiMode) {
-        console.log(`[AI-MODE] Skipping interest voting/re-auction for room ${roomCode}. Moving to selection.`);
-        startSelectionPhase(roomCode, io);
+        console.log(`[AI-MODE] Skipping interest voting/re-auction for room ${roomCode}. Moving to finalization.`);
+        finalizeResults(roomCode, io);
         return;
     }
 
@@ -322,7 +453,7 @@ async function handleAuctionEndTransition(roomCode, io) {
 
     if (allExhausted) {
         console.log(`[TRANSITION] All teams exhausted in room ${roomCode}. Skipping voting/re-auction.`);
-        startSelectionPhase(roomCode, io);
+        finalizeResults(roomCode, io);
         return;
     }
 
@@ -399,165 +530,55 @@ async function handleAuctionEndTransition(roomCode, io) {
                     io.to(roomCode).emit('auction_resumed', { state: refreshedState });
                     loadNextPlayer(roomCode, io);
                 } else {
-                    startSelectionPhase(roomCode, io);
+                    finalizeResults(roomCode, io);
                 }
             }, 5000);
             return;
         }
     }
 
-    // Phase 3: Selection (Final phase before results)
-    startSelectionPhase(roomCode, io);
+    // Phase 3: Finalization
+    finalizeResults(roomCode, io);
 }
 
-function startSelectionPhase(roomCode, io) {
+/**
+ * finalizeManualEnd — Skips all voting and goes straight to selection
+ * This is triggered by a host manual end with player acknowledgement.
+ */
+function finalizeManualEnd(roomCode, io) {
     const state = roomStates[roomCode];
     if (!state) return;
 
-    state.status = 'Selection';
-    state.selectionTimer = 120;  // 2 minutes for playing 11 + impact selection
-    state.selectionTimerEndsAt = Date.now() + (120 * 1000);
-
-    console.log(`\n--- TRANSITIONING TO SELECTION PHASE FOR ROOM ${roomCode} ---`);
-    io.to(roomCode).emit('auction_finished', {
-        status: 'Selection',
-        teams: state.teams
-    });
-
-    if (roomTimers[roomCode]) clearInterval(roomTimers[roomCode]);
-    roomTimers[roomCode] = setInterval(() => {
-        tickSelectionTimer(roomCode, io);
-    }, 1000);
-}
-
-function tickSelectionTimer(roomCode, io) {
-    const state = roomStates[roomCode];
-    if (!state || state.status !== 'Selection') {
-        if (roomTimers[roomCode]) {
-            clearInterval(roomTimers[roomCode]);
-            delete roomTimers[roomCode];
-        }
+    // Prevent overriding if already finalizing, evaluating, or finished
+    if (state.status === 'Finished' || state.status === 'Evaluating' || state.isFinalizing) {
+        console.log(`[MANUAL-END] Ignored. Room ${roomCode} is already in state: ${state.status}`);
         return;
     }
 
-    const now = Date.now();
-    const remaining = Math.max(0, Math.ceil((state.selectionTimerEndsAt - now) / 1000));
-
-    // Only update and emit if the timer value actually changed
-    if (state.selectionTimer !== remaining) {
-        state.selectionTimer = remaining;
-        io.to(roomCode).emit('selection_timer_tick', { timer: state.selectionTimer });
+    console.log(`[MANUAL-END] Finalizing auction for room ${roomCode}. Skipping voting.`);
+    
+    // Stop all timers
+    if (roomTimers[roomCode]) {
+        clearInterval(roomTimers[roomCode]);
+        delete roomTimers[roomCode];
     }
 
-    if (state.selectionTimer <= 0) {
-        if (roomTimers[roomCode]) {
-            clearInterval(roomTimers[roomCode]);
-            delete roomTimers[roomCode];
-        }
+    state.status = 'Paused';
+    io.to(roomCode).emit('receive_chat_message', {
+        id: Date.now(),
+        senderName: 'System',
+        senderTeam: 'System',
+        senderColor: '#ef4444',
+        message: "Auction closed by Host. Crunching numbers and finalizing squads...",
+        timestamp: new Date().toLocaleTimeString()
+    });
 
-        // AUTO-SELECTION FOR SLOW/OFFLINE USERS
-        const { selectPlaying11AndImpact } = require('../services/aiRating');
-
-        const autoSelectionPromises = state.teams.map(async (team, index) => {
-            const hasConfirmed = team.playing11 && team.playing11.length === 11 && team.impactPlayers && team.impactPlayers.length === 4;
-            if (!hasConfirmed) {
-                console.log(`[SELECTION] Timer expired for ${team.teamName}. Auto-selecting squad...`);
-                try {
-                    const playersWithData = await Promise.all(team.playersAcquired.map(async (p) => {
-                        const data = await findPlayerById(p.player);
-                        return { 
-                            id: String(p.player), 
-                            name: data?.player || data?.name || p.name, 
-                            role: data?.role || p.role,
-                            stats: data?.stats || {}
-                        };
-                    }));
-
-                    const selection = await selectPlaying11AndImpact(team.teamName, playersWithData);
-                    
-                    // Safety check: ensure arrays
-                    const finalPlaying11 = ensureArray(selection.homePlaying11 || selection.playing11).slice(0, 11);
-                    const finalImpact = ensureArray(selection.homeImpactPlayers || selection.impactPlayers).slice(0, 4);
-
-                    // Final fallback if still too short
-                    const allIds = playersWithData.map(p => p.id);
-                    state.teams[index].playing11 = finalPlaying11.length === 11 ? finalPlaying11 : allIds.slice(0, 11);
-                    state.teams[index].impactPlayers = finalImpact.length === 4 ? finalImpact : allIds.slice(11, 15);
-
-                    triggerBackgroundEvaluation(roomCode, index, io);
-                } catch (err) {
-                    console.error(`[SELECTION] Auto-selection failed for ${team.teamName}:`, err);
-                    const ids = team.playersAcquired.map(p => String(p.player));
-                    state.teams[index].playing11 = ids.slice(0, 11);
-                    state.teams[index].impactPlayers = ids.slice(11, 15);
-                }
-            }
-        });
-
-        Promise.all(autoSelectionPromises).then(() => {
-            finalizeResults(roomCode, io);
-        });
-    }
+    // Move to finalization phase directly
+    setTimeout(() => {
+        finalizeResults(roomCode, io);
+    }, 2000);
 }
 
-async function triggerBackgroundEvaluation(roomCode, teamIndex, io) {
-    const state = roomStates[roomCode];
-    if (!state) return;
-
-    const team = state.teams[teamIndex];
-    if (!team || !team.playing11 || !team.impactPlayers) return;
-
-    console.log(`[AI-BACKGROUND] Starting evaluation for ${team.teamName} in room ${roomCode}...`);
-
-    try {
-        const { evaluateTeam } = require('../services/aiRating');
-
-        const playersWithData = await Promise.all(team.playersAcquired.map(async (p) => {
-            const data = await findPlayerById(p.player);
-            const nat = (data?.nationality || "").toLowerCase().trim();
-            const isOverseas = nat && !["india", "indian", "ind"].includes(nat);
-
-            return {
-                player: p.player, 
-                name: data?.player || data?.name || p.name,
-                role: data?.role,
-                nationality: data?.nationality,
-                image_path: data?.image_path || data?.imagepath || data?.photoUrl,
-                isOverseas: isOverseas,
-                boughtFor: p.boughtFor,
-                stats: data?.stats || {}
-            };
-        }));
-
-        state.teams[teamIndex].playersAcquired = playersWithData;
-
-        // Attach logo if missing
-        if (!state.teams[teamIndex].logoUrl) {
-            const teamInfo = IPL_TEAMS.find(t => t.id === state.teams[teamIndex].id || t.id === state.teams[teamIndex].teamName?.substring(0, 4));
-            if (!teamInfo) {
-                const byName = IPL_TEAMS.find(t => state.teams[teamIndex].teamName?.toLowerCase().includes(t.name.toLowerCase()));
-                if (byName) state.teams[teamIndex].logoUrl = byName.logoUrl;
-            } else {
-                state.teams[teamIndex].logoUrl = teamInfo.logoUrl;
-            }
-        }
-
-        const evaluationData = {
-            teamName: team.teamName,
-            currentPurse: team.currentPurse,
-            playersAcquired: playersWithData.map(p => ({ ...p, id: String(p.player) })),
-            playing11: ensureArray(team.playing11).map(id => String(id)),
-            impactPlayers: ensureArray(team.impactPlayers).map(id => String(id))
-        };
-
-        const evaluation = await evaluateTeam(evaluationData);
-        state.teams[teamIndex].evaluation = evaluation;
-        console.log(`[AI-BACKGROUND] Completed evaluation for ${team.teamName}.`);
-
-    } catch (err) {
-        console.error(`[AI-BACKGROUND] Error evaluating ${team.teamName}:`, err);
-    }
-}
 
 async function finalizeResults(roomCode, io) {
     const state = roomStates[roomCode];
@@ -600,30 +621,20 @@ async function finalizeResults(roomCode, io) {
             timestamp: new Date().toLocaleTimeString()
         });
 
-        // Increase polling timeout to 60 seconds for stability
-        let attempts = 0;
-        const maxAttempts = 240; // Wait up to 4 minutes for AI evaluation of all teams
+        // The AI evaluation is now a single batch call done synchronously below.
+        // No need to poll for background jobs.
 
-        while (attempts < maxAttempts) {
-            const allEvaluated = state.teams.every(t => t.evaluation && t.evaluation.overallScore > 0);
-            if (allEvaluated) break;
+        const { evaluateAllTeams } = require('../services/aiRating');
 
-            if (attempts % 5 === 0) {
-                console.log(`[AI-FINALIZE] Waiting for background evaluations (Attempt ${attempts + 1}/${maxAttempts})...`);
-            }
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            attempts++;
-        }
-
-        const { evaluateAllTeams, evaluateTeam } = require('../services/aiRating');
-
+        // 1. Enrich ALL teams with full player data
         await Promise.all(state.teams.map(async (team, index) => {
-            // Populate rich data first
             const playersAcquired = team.playersAcquired || [];
+            
+            // Enrich details from Database
             const richPlayers = await Promise.all(playersAcquired.map(async (p) => {
                 const data = await findPlayerById(p.player);
                 const nat = (data?.nationality || "").toLowerCase().trim();
-                const isOverseas = nat && !["india", "indian", "ind"].includes(nat);
+                const isOverseas = Boolean(nat && !["india", "indian", "ind"].includes(nat));
 
                 return {
                     player: p.player,
@@ -633,64 +644,102 @@ async function finalizeResults(roomCode, io) {
                     image_path: data?.image_path || data?.imagepath || data?.photoUrl,
                     isOverseas: isOverseas,
                     boughtFor: p.boughtFor,
+                    points: data?.points || p.points || 0,
                     stats: data?.stats || {}
                 };
             }));
             state.teams[index].playersAcquired = richPlayers;
-
-            if (!team.evaluation || !team.evaluation.overallScore) {
-                console.log(`[AI-FINALIZE] Falling back to synchronous evaluation for ${team.teamName}`);
-
-                let playing11 = team.playing11 || [];
-                let impactPlayers = team.impactPlayers || [];
-
-                if (!Array.isArray(playing11) || playing11.length < 11) {
-                    const { selectPlaying11AndImpact } = require('../services/aiRating');
-                    const selection = await selectPlaying11AndImpact(team.teamName, richPlayers);
-                    playing11 = ensureArray(selection.homePlaying11 || selection.playing11).slice(0, 11);
-                    impactPlayers = ensureArray(selection.homeImpactPlayers || selection.impactPlayers).slice(0, 4);
-                }
-
-                const evaluationData = {
-                    teamName: team.teamName,
-                    currentPurse: team.currentPurse,
-                    playersAcquired: richPlayers.map(p => ({ ...p, id: String(p.player) })),
-                    playing11: ensureArray(playing11).map(id => String(id)),
-                    impactPlayers: ensureArray(impactPlayers).map(id => String(id))
-                };
-
-                state.teams[index].evaluation = await evaluateTeam(evaluationData);
-                state.teams[index].playing11 = playing11;
-                state.teams[index].impactPlayers = impactPlayers;
-            }
         }));
 
-        const evaluatedResults = await evaluateAllTeams(state.teams.map(t => ({
-            teamName: t.teamName,
-            currentPurse: t.currentPurse,
-            playersAcquired: (t.playersAcquired || []).map(p => ({ ...p, id: String(p.player) })),
-            playing11: t.playing11,
-            impactPlayers: t.impactPlayers,
-            evaluation: t.evaluation
-        })));
+        // 2. Identify QUALIFIED teams (>= 15 players)
+        const qualifiedTeams = state.teams.filter(t => (t.playersAcquired?.length || 0) >= 15);
+        const disqualifiedTeams = state.teams.filter(t => (t.playersAcquired?.length || 0) < 15);
 
-        state.status = 'Finished';
-        state.teams = state.teams.map(originalTeam => {
-            const evalResult = evaluatedResults.find(r => r.teamName === originalTeam.teamName);
-            return {
-                ...originalTeam,
-                evaluation: evalResult?.evaluation,
-                rank: evalResult?.rank
+        // Handle Disqualified Teams
+        disqualifiedTeams.forEach(t => {
+            const idx = state.teams.findIndex(st => st.teamName === t.teamName);
+            state.teams[idx].evaluation = {
+                score: 0,
+                titleProbability: "Weak",
+                analysis: {
+                    batting_narrative: "DISQUALIFIED: Squad size requirement (min 15) not met.",
+                    bowling_narrative: "Squad is too thin to field a competitive IPL bowling attack.",
+                    tactical_balance: "Insufficient squad depth for tactical flexibility.",
+                    key_risks_and_fixes: "Recruit more players to meet minimum squad requirements."
+                }
             };
         });
 
-        await AuctionRoom.findOneAndUpdate({ roomId: roomCode }, {
-            status: 'Finished',
-            franchisesInRoom: state.teams
+        // 3. Trigger BATCH AI Evaluation for qualified teams
+        let evaluatedResults = [];
+        if (qualifiedTeams.length > 0) {
+            console.log(`[AI-BATCH] Dispatching unified analysis for ${qualifiedTeams.length} teams.`);
+            evaluatedResults = await evaluateAllTeams(qualifiedTeams.map(t => ({
+                teamId: t.teamName,
+                teamName: t.teamName,
+                playersAcquired: t.playersAcquired,
+                currentPurse: t.currentPurse
+            })));
+        }
+
+        // 4. Map Results back to State
+        state.teams.forEach((t, idx) => {
+            const res = evaluatedResults.find(r => r.teamId === t.teamName);
+            if (res) {
+                state.teams[idx].evaluation = res.evaluation;
+                
+                // Map BestXI back to team IDs (find IDs from enriched names/objects)
+                if (res.bestXI && res.bestXI.playing11) {
+                    const findId = (name) => {
+                        const p = t.playersAcquired.find(pa => pa.name === name);
+                        return p ? p.player : null;
+                    };
+                    state.teams[idx].playing11 = res.bestXI.playing11.map(name => findId(name)).filter(id => id);
+                    state.teams[idx].impactPlayers = res.bestXI.impactPlayers.map(name => findId(name)).filter(id => id);
+                }
+            }
         });
 
-        console.log(`--- PERSISTED RESULTS FOR ROOM ${roomCode} ---`);
-        io.to(roomCode).emit('results_ready');
+        state.status = 'Finished';
+        const finalizedTeams = [...state.teams];
+
+        // Final Sort and Rank
+        finalizedTeams.sort((a, b) => (b.evaluation?.overallScore || 0) - (a.evaluation?.overallScore || 0));
+        state.teams = finalizedTeams.map((t, i) => ({ ...t, rank: i + 1 }));
+
+        // Move to short-lived CompletedRoom storage (TTL)
+        const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+        await CompletedRoom.create({
+            roomCode,
+            summary: {
+                totalPlayers: state.players.length,
+                soldPlayers: state.teams.reduce((acc, t) => acc + (t.playersAcquired?.length || 0), 0)
+            },
+            results: state.teams.flatMap(t => (t.playersAcquired || []).map(p => ({
+                playerName: p.name,
+                soldTo: t.teamName,
+                amount: p.boughtFor
+            }))),
+            expiresAt: expiresAt
+        });
+
+        // Persist final results to AuctionRoom before cleaning up ActiveRoom
+        await AuctionRoom.findOneAndUpdate(
+            { roomId: roomCode },
+            { 
+                $set: { 
+                    status: 'Finished',
+                    franchisesInRoom: state.teams 
+                } 
+            }
+        );
+
+        // Cleanup ActiveRoom (Memory safety / Storage optimization)
+        await ActiveRoom.deleteOne({ roomCode });
+        // await AuctionRoom.deleteOne({ roomId: roomCode }); // DO NOT delete legacy persistent record anymore
+
+        console.log(`--- AUCTION FINISHED AND PERSISTED FOR ROOM ${roomCode} ---`);
+        io.to(roomCode).emit('auction_finished', { teams: state.teams });
 
     } catch (err) {
         console.error("Critical Error in finalizeResults:", err);
@@ -767,7 +816,7 @@ function processVotingResults(roomCode, io) {
                 io.to(roomCode).emit('auction_resumed', { state: refreshedState });
                 loadNextPlayer(roomCode, io);
             } else {
-                startSelectionPhase(roomCode, io);
+                finalizeResults(roomCode, io);
             }
         }, 3000);
     } else if (state.wasRunningBeforeVoting) {
@@ -777,16 +826,11 @@ function processVotingResults(roomCode, io) {
         if (state.timer > 0 && state.currentIndex < (state.players || []).length) {
             state.timerEndsAt = Date.now() + (state.timer * 1000);
             if (roomTimers[roomCode]) clearInterval(roomTimers[roomCode]);
+            // Bug 4 fix: was calling non-existent tickTimer — use tickAuctionTimer
             roomTimers[roomCode] = setInterval(() => {
-                const refreshed = roomStates[roomCode];
-                if (refreshed && refreshed.status === 'Auctioning') {
-                    tickTimer(roomCode, io);
-                } else {
-                    clearInterval(roomTimers[roomCode]);
-                    delete roomTimers[roomCode];
-                }
-            }, 500);
-            io.to(roomCode).emit('auction_resumed', { state });
+                tickAuctionTimer(roomCode, io);
+            }, 1000);
+            io.to(roomCode).emit('auction_resumed', { timer: state.timer });
         }
     }
 }
@@ -904,6 +948,7 @@ const setupSocketHandlers = (io) => {
                 await newRoom.save();
 
                 socket.join(roomCode);
+                socket.roomCode = roomCode; // Required by SocketRegistry place_bid handler
 
                 // Init high-performance memory state
                 roomStates[roomCode] = {
@@ -1034,15 +1079,19 @@ const setupSocketHandlers = (io) => {
                 }
 
                 socket.join(roomCode);
+                socket.roomCode = roomCode; // Required by SocketRegistry place_bid handler
 
                 // Session Persistence: Re-link socket to their existing team via userId
                 if (existingTeam) {
                     console.log(`[SESSION] Re-linking ${playerName} (userId: ${userId}) to team ${existingTeam.teamName} (New Socket: ${socket.id})`);
                     existingTeam.ownerSocketId = socket.id;
 
-                    // Update host socket ID if this person is the host
-                    if (state.hostUserId === userId || state.hostName === playerName) {
+                    // Update host socket ID if this person is the host or a co-host
+                    if (state.hostUserId === userId) {
                         state.host = socket.id;
+                        console.log(`[SESSION] Re-linking host: ${playerName} (${userId})`);
+                    } else if (state.coHostUserIds?.includes(userId)) {
+                        console.log(`[SESSION] Re-linking co-host: ${playerName} (${userId})`);
                     }
 
                     io.to(roomCode).emit('lobby_update', { teams: lightweightTeams(state.teams) });
@@ -1061,11 +1110,12 @@ const setupSocketHandlers = (io) => {
 
                 // Build a lightweight state summary for room_joined
                 const isActivePhase = state.status === 'Lobby' || state.status === 'Auctioning' || state.status === 'Paused';
+                const hasPlayers = Array.isArray(state.players) && state.players.length > 0;
                 const stateSummary = {
                     ...state,
-                    players: state.players.map(p => ({ _id: p._id, name: p.name, player: p.player, poolName: p.poolName, basePrice: p.basePrice, imagepath: p.imagepath, image_path: p.image_path, photoUrl: p.photoUrl })),
+                    players: hasPlayers ? state.players.map(p => ({ _id: p._id, name: p.name, player: p.player, poolName: p.poolName, basePrice: p.basePrice, imagepath: p.imagepath, image_path: p.image_path, photoUrl: p.photoUrl })) : [],
                     teams: isActivePhase ? lightweightTeams(state.teams) : state.teams,
-                    activePlayer: (state.status === 'Auctioning' || state.status === 'Paused') ? state.players[state.currentIndex] : null,
+                    activePlayer: (hasPlayers && (state.status === 'Auctioning' || state.status === 'Paused')) ? state.players[state.currentIndex] : null,
                     activeBid: state.currentBid,
                     unsoldHistory: state.unsoldHistory || []
                 };
@@ -1256,60 +1306,85 @@ const setupSocketHandlers = (io) => {
         // Place Bid
         socket.on('place_bid', ({ roomCode, amount }) => {
             const state = roomStates[roomCode];
-            if (!state || state.status !== 'Auctioning') return;
+            // Bug 1 fix: accept both 'Auctioning' (set by start_auction) and
+            // 'ONGOING' (set by loadNextPlayer) — these are equivalent active states.
+            if (!state || (state.status !== 'Auctioning' && state.status !== 'ONGOING')) return;
 
-            // Verify team exists using stable userId
+            // Verify team using userId
             const team = state.teams.find(t => t.ownerUserId === socket.userId);
             if (!team) return socket.emit('error', 'You are not assigned to a franchise');
             if (state.currentBid.teamId === team.franchiseId) return socket.emit('error', 'You already hold the highest bid');
 
-            // Determine Increment based on pool and current bid amount
-            const currentPlayer = state.players[state.currentIndex];
-            const poolID = currentPlayer.poolID || '';
-            const curAmt = state.currentBid.amount;
-            const minIncrement = getMinIncrement(poolID, curAmt);
+            // Determine Increment
+            const currentPlayer = state.currentPlayer || {};
+            const curAmt = state.currentBid.amount || 0;
+            const minIncrement = getMinIncrement(currentPlayer.poolID || '', curAmt);
 
-            const requiredBid = state.currentBid.amount === 0 ? currentPlayer.basePrice : state.currentBid.amount + minIncrement;
+            const requiredBid = curAmt === 0 ? (currentPlayer.basePrice || 20) : curAmt + minIncrement;
+            // Use raw milliseconds for validation to avoid rounding issues in the last second.
+            const remainingMs = state.timerEndsAt ? (state.timerEndsAt - Date.now()) : (state.timer * 1000);
 
+            // 1. Strict Validation
+            // Allow bids until 1000ms after timer expiry (matching the -1s grace period in tickAuctionTimer)
+            if (remainingMs < -1000) return socket.emit('error', 'Auction for this player has ended.');
             if (amount < requiredBid) return socket.emit('error', `Minimum bid is ${requiredBid}L`);
             if (amount > team.currentPurse) return socket.emit('error', 'Insufficient purse limit');
-            if (team.playersAcquired.length >= 25) return socket.emit('error', 'Squad limit reached (max 25)');
+            if (team.playersAcquired.length >= 25) return socket.emit('error', 'Squad limit reached');
 
-            // Overseas Limit Check
-            if (currentPlayer.isOverseas && (team.overseasCount || 0) >= 8) {
-                return socket.emit('error', 'Overseas player limit (8) reached for your team');
+            // 1.1 Overseas Limit Check
+            const overseasCount = (team.playersAcquired || []).filter(p => p.isOverseas || p.overseas).length;
+            const playerIsOverseas = currentPlayer.isOverseas || currentPlayer.overseas;
+            if (playerIsOverseas && overseasCount >= 8) {
+                return socket.emit('error', 'Overseas player limit reached (Max 8)');
             }
 
-            // Accept bid — update memory only, no DB write per bid
-            state.currentBid = { amount, teamId: team.franchiseId, teamName: team.teamName, teamColor: team.teamThemeColor, teamLogo: team.teamLogo, ownerName: team.ownerName };
+            // 2. IN-MEMORY STATE MUTATION (synchronous, race-safe via Node.js single thread)
+            const now = new Date();
+            state.currentBid = { 
+                amount, 
+                teamId: team.franchiseId, 
+                teamName: team.teamName, 
+                teamColor: team.teamThemeColor, 
+                teamLogo: team.teamLogo, 
+                ownerName: team.ownerName 
+            };
+            state.lastBidTime = now;
+            state.timer = state.timerDuration;
+            // Reset the timerEndsAt so timer check stays correct after this bid
             state.timerEndsAt = Date.now() + (state.timerDuration * 1000);
-            state.timer = state.timerDuration; // Reset timer
 
-            // Batch the bid state update — flushes every 30s (NOT per bid)
-            markDirty(roomCode, {
-                currentBidAmount: amount,
-                highestBidderTeamId: team.franchiseId
-            });
+            // Track bid history in memory
+            if (!state.last5Bids) state.last5Bids = [];
+            state.last5Bids = [...state.last5Bids, { amount, teamName: team.teamName, timestamp: now }].slice(-5);
 
-            // Shortened keys for high-frequency bid updates
-            io.to(roomCode).emit('bp', {
-                cb: {
-                    a: amount,
-                    tid: team.franchiseId,
-                    tn: team.teamName,
-                    tc: team.teamThemeColor,
-                    tl: team.teamLogo,
-                    on: team.ownerName
+            // 3. Broadcast to all clients immediately
+            emitFullAuctionState(roomCode, io);
+
+            // 4. Fire-and-forget DB persist (upsert so it works even if no ActiveRoom doc exists)
+            ActiveRoom.findOneAndUpdate(
+                { roomCode },
+                {
+                    $set: {
+                        currentBid: { amount, teamId: team.franchiseId, teamName: team.teamName, ownerUserId: team.ownerUserId },
+                        lastBidTime: now,
+                        auctionStatus: 'ONGOING'
+                    },
+                    $push: {
+                        last5Bids: {
+                            $each: [{ amount, teamName: team.teamName, timestamp: now }],
+                            $slice: -5
+                        }
+                    }
                 },
-                t: state.timer
-            });
+                { upsert: true, returnDocument: 'before' }
+            ).catch(err => console.warn(`[BID] DB persist failed for ${roomCode}:`, err.message));
         });
 
         // Skip Player (AI Mode Only)
         socket.on('skip_player', async ({ roomCode }) => {
             const state = roomStates[roomCode];
             if (!state || !state.isAiMode) return;
-            if (state.status !== 'Auctioning') return;
+            if (state.status !== 'Auctioning' && state.status !== 'ONGOING') return;
             if (state.host !== socket.id) return;
 
             console.log(`[AI-MODE] Host triggered skip for player: ${state.players[state.currentIndex]?.name}`);
@@ -1320,7 +1395,7 @@ const setupSocketHandlers = (io) => {
         socket.on('skip_pool', async ({ roomCode }) => {
             const state = roomStates[roomCode];
             if (!state || !state.isAiMode) return;
-            if (state.status !== 'Auctioning') return;
+            if (state.status !== 'Auctioning' && state.status !== 'ONGOING') return;
             if (state.host !== socket.id) return;
 
             const currentPlayer = state.players[state.currentIndex];
@@ -1369,8 +1444,8 @@ const setupSocketHandlers = (io) => {
         // --- STATE SYNC ---
         socket.on('request_auction_sync', ({ roomCode }) => {
             const state = roomStates[roomCode];
-            // Allow sync even if paused, just not in lobby, selection, or finished
-            if (!state || ['Lobby', 'Selection', 'Finished'].includes(state.status)) return;
+            // Allow sync even if paused, just not in lobby, or finished
+            if (!state || ['Lobby', 'Finished', 'Evaluating'].includes(state.status)) return;
 
             const player = state.players[state.currentIndex];
             const nextPlayers = state.players.slice(state.currentIndex + 1);
@@ -1602,11 +1677,13 @@ const setupSocketHandlers = (io) => {
             // Re-sync timer Ends At based on how much time was remaining
             if (state.timer > 0 && state.currentIndex < state.players.length) {
                 state.timerEndsAt = Date.now() + (state.timer * 1000);
+                // CRITICAL: Update lastBidTime so calculateRemainingTime() returns the correct value
+                state.lastBidTime = new Date(Date.now() - (state.timerDuration - state.timer) * 1000);
 
                 if (roomTimers[roomCode]) clearInterval(roomTimers[roomCode]);
                 roomTimers[roomCode] = setInterval(() => {
-                    tickTimer(roomCode, io);
-                }, 500);
+                    tickAuctionTimer(roomCode, io);
+                }, 1000); // Standard 1s interval
             } else {
                 // We were stuck in a transition or at the very beginning
                 loadNextPlayer(roomCode, io);
@@ -1615,12 +1692,70 @@ const setupSocketHandlers = (io) => {
             io.to(roomCode).emit('auction_resumed', { state });
         });
 
-        // Force End Auction Early
+        // Request Force End (Step 1)
+        socket.on('request_force_end', ({ roomCode }) => {
+            const state = roomStates[roomCode];
+            const mod = isModerator(state, socket.id, socket.userId);
+            if (!state || !mod) return;
+            
+            // Prevent requesting end if already finishing
+            if (state.status === 'Finished' || state.status === 'Evaluating' || state.isFinalizing) return;
+
+            const humanOwners = state.teams
+                .filter(t => !t.isBot && t.ownerUserId)
+                .map(t => ({
+                    userId: t.ownerUserId,
+                    teamName: t.teamName,
+                    socketId: t.ownerSocketId
+                }));
+
+            state.endRequest = {
+                initiator: socket.userId || socket.id,
+                acknowledgedBy: [socket.userId || socket.id], // Host auto-acknowledges
+                requiredUsers: humanOwners.map(u => u.userId)
+            };
+
+            io.to(roomCode).emit('auction_end_requested', {
+                endRequest: state.endRequest,
+                humanOwners
+            });
+        });
+
+        // Acknowledge Force End (Step 2)
+        socket.on('acknowledge_force_end', ({ roomCode }) => {
+            const state = roomStates[roomCode];
+            if (!state || !state.endRequest) return;
+
+            const userId = socket.userId || socket.id;
+            if (!state.endRequest.acknowledgedBy.includes(userId)) {
+                state.endRequest.acknowledgedBy.push(userId);
+            }
+
+            io.to(roomCode).emit('end_acknowledgement_update', {
+                acknowledgedBy: state.endRequest.acknowledgedBy
+            });
+        });
+
+        // Cancel Force End
+        socket.on('cancel_force_end', ({ roomCode }) => {
+            const state = roomStates[roomCode];
+            const mod = isModerator(state, socket.id, socket.userId);
+            if (!state || !mod) return;
+
+            delete state.endRequest;
+            io.to(roomCode).emit('auction_end_cancelled');
+        });
+
+        // Force End Auction Early (Final Step)
         socket.on('force_end_auction', ({ roomCode }) => {
             const state = roomStates[roomCode];
             const mod = isModerator(state, socket.id, socket.userId);
             if (!state || !mod) return;
-            handleAuctionEndTransition(roomCode, io);
+            
+            // Skip voting and end immediately
+            finalizeManualEnd(roomCode, io);
+            delete state.endRequest;
+            io.to(roomCode).emit('auction_end_cancelled'); // Hide modal for all clients
         });
 
         // Update Room Settings (Host Only)
@@ -1631,8 +1766,22 @@ const setupSocketHandlers = (io) => {
 
             if ([3, 5, 7, 10].includes(timerDuration)) {
                 state.timerDuration = timerDuration;
-                io.to(roomCode).emit('settings_updated', { timerDuration: state.timerDuration });
-                console.log(`Room ${roomCode} settings updated: timerDuration = ${timerDuration}s`);
+                
+                // CRITICAL: Reset lastBidTime to now so the new duration starts from zero elapsed
+                // This prevents the timer from jumping into negative values and triggering 
+                // premature unsold statuses when the duration is shortened.
+                state.lastBidTime = Date.now();
+                state.timer = state.timerDuration;
+                
+                io.to(roomCode).emit('settings_updated', { 
+                    timerDuration: state.timerDuration,
+                    timer: state.timer 
+                });
+                
+                // Persist the new lastBidTime to DB so recovery also works correctly
+                persistActiveState(roomCode);
+                
+                console.log(`Room ${roomCode} settings updated: timerDuration = ${timerDuration}s, reset lastBidTime.`);
             }
         });
 
@@ -1695,93 +1844,6 @@ const setupSocketHandlers = (io) => {
             }
 
             console.log(`[LOBBY] User ${userId} changed name to: ${newName}`);
-        });
-
-        // Selection Phase Handlers (11 + 4 Impact Players)
-        socket.on('manual_select_squad', async ({ roomCode, playing11Ids, impactPlayerIds }) => {
-            const state = roomStates[roomCode];
-            if (!state || state.status !== 'Selection') return;
-
-            const userId = socket.userId;
-            const teamIndex = state.teams.findIndex(t =>
-                (userId && t.ownerUserId === userId) || t.ownerSocketId === socket.id
-            );
-            if (teamIndex === -1) return;
-
-            console.log(`[SELECTION] Manual squad confirmed for ${state.teams[teamIndex].teamName} in room ${roomCode}. XI: ${playing11Ids.length}, Impact: ${impactPlayerIds.length}`);
-
-            state.teams[teamIndex].playing11 = playing11Ids;
-            state.teams[teamIndex].impactPlayers = impactPlayerIds;
-
-            socket.emit('selection_confirmed', {
-                playing11: playing11Ids,
-                impactPlayers: impactPlayerIds
-            });
-
-            // Start background evaluation immediately
-            triggerBackgroundEvaluation(roomCode, teamIndex, io);
-
-            // Check if all teams are done
-            const allDone = state.teams.every(t =>
-                t.playing11 && t.playing11.length === 11 &&
-                t.impactPlayers && t.impactPlayers.length === 4
-            );
-            if (allDone) {
-                finalizeResults(roomCode, io);
-            }
-        });
-
-        socket.on('auto_select_squad', async ({ roomCode }) => {
-            const state = roomStates[roomCode];
-            if (!state || state.status !== 'Selection') return;
-
-            const userId = socket.userId;
-            const teamIndex = state.teams.findIndex(t =>
-                (userId && t.ownerUserId === userId) || t.ownerSocketId === socket.id
-            );
-            if (teamIndex === -1) return;
-
-            const team = state.teams[teamIndex];
-            const { selectPlaying11AndImpact } = require('../services/aiRating');
-
-            if (!team.playersAcquired) return;
-
-            const playersWithData = await Promise.all(team.playersAcquired.map(async (p) => {
-                const data = await findPlayerById(p.player);
-                return { 
-                    id: String(p.player), 
-                    name: data?.player || data?.name || p.name, 
-                    role: data?.role || p.role,
-                    stats: data?.stats || {}
-                };
-            }));
-
-            const selection = await selectPlaying11AndImpact(team.teamName, playersWithData);
-            
-            // Use Home Playing 11 as the default "Optimal" selection for locking in
-            const finalPlaying11 = selection.homePlaying11 || selection.playing11 || [];
-            const finalImpact = selection.homeImpactPlayers || selection.impactPlayers || [];
-
-            console.log(`[SELECTION] Auto squad confirmed for ${team.teamName} in room ${roomCode}. XI: ${finalPlaying11.length}, Impact: ${finalImpact.length}`);
-
-            state.teams[teamIndex].playing11 = finalPlaying11;
-            state.teams[teamIndex].impactPlayers = finalImpact;
-
-            socket.emit('selection_confirmed', {
-                playing11: finalPlaying11,
-                impactPlayers: finalImpact
-            });
-
-            // Start background evaluation immediately
-            triggerBackgroundEvaluation(roomCode, teamIndex, io);
-
-            const allDone = state.teams.every(t =>
-                t.playing11 && t.playing11.length === 11 &&
-                t.impactPlayers && t.impactPlayers.length === 4
-            );
-            if (allDone) {
-                finalizeResults(roomCode, io);
-            }
         });
 
         // --- INTEREST VOTING (Pool 3 & 4) ---
@@ -1857,21 +1919,8 @@ const setupSocketHandlers = (io) => {
             }
         });
 
-        socket.on('resume_auction', ({ roomCode }) => {
-            const state = roomStates[roomCode];
-            if (!state || state.status !== 'Paused') return;
-
-            state.status = 'Auctioning';
-            if (state.timer > 0 && state.currentIndex < state.players.length) {
-                state.timerEndsAt = Date.now() + (state.timer * 1000);
-                if (roomTimers[roomCode]) clearInterval(roomTimers[roomCode]);
-                roomTimers[roomCode] = setInterval(() => {
-                    tickTimer(roomCode, io);
-                }, 500);
-            }
-
-            io.to(roomCode).emit('auction_resumed', { state });
-        });
+        // NOTE: resume_auction is handled above (line ~1736) with the correct
+        // tickAuctionTimer function. This duplicate (calling non-existent tickTimer) has been removed.
 
         socket.on('disconnecting', () => {
             for (const roomCode of socket.rooms) {
@@ -2065,7 +2114,7 @@ function loadNextPlayer(roomCode, io) {
     }, Infinity);
 
     const allTeamsExhausted = state.teams.length > 0 && state.teams.every(t => {
-        const isFull = t.playersAcquired.length >= 25;
+        const isFull = (t.playersAcquired?.length || 0) >= 25;
         const cantAfford = t.currentPurse < 30; // Min bidding threshold requested by user
         return isFull || cantAfford;
     });
@@ -2090,12 +2139,28 @@ function loadNextPlayer(roomCode, io) {
 
     state.currentBid = { amount: 0, teamId: null, teamName: null, teamColor: null, teamLogo: null, ownerName: null };
     state.timer = state.timerDuration;
-    
+    // Bug 2 fix: set timerEndsAt here so place_bid time-validation works immediately
+    // when the first bid arrives for this player.
+    state.timerEndsAt = Date.now() + (state.timerDuration * 1000);
+
     // --- LEGEND PAUSE LOGIC ---
     const playerName = player.player || player.name || "";
-    const isLegend = LEGEND_NAMES.includes(playerName) && state.currentIndex > 0;
+    // [MOD] Skip legend intro in AI mode
+    const isLegend = LEGEND_NAMES.includes(playerName) && state.currentIndex > 0 && !state.isAiMode;
 
+    state.currentPlayer = {
+        ...player, // Retain ALL fields (stats, image_path, role, etc.) for UI sync
+        id: String(player._id || player.id),
+        name: playerName,
+        basePrice: player.basePrice || player.base_price,
+        poolID: player.poolID || player.originalPool
+    };
+    state.lastBidTime = new Date();
+    
     if (isLegend) {
+        // Paused state -> No timer running
+        ActiveRoom.updateOne({ roomCode }, { $set: { isTimerRunning: false, auctionStatus: 'Paused' } }).exec();
+
         console.log(`[LEGEND] ${playerName} detected. Pausing auction for 7s intro.`);
         state.status = 'Paused';
         state.timer = 0; // Show 0 or static timer during intro
@@ -2109,29 +2174,39 @@ function loadNextPlayer(roomCode, io) {
         });
 
         io.to(roomCode).emit('auction_paused');
-
-        if (roomTimers[roomCode]) clearInterval(roomTimers[roomCode]);
+        if (roomTimers[roomCode]) {
+            clearInterval(roomTimers[roomCode]);
+            delete roomTimers[roomCode];
+        }
 
         setTimeout(() => {
             const refreshedState = roomStates[roomCode];
             if (refreshedState && refreshedState.status === 'Paused' && refreshedState.currentIndex === state.currentIndex) {
                 console.log(`[LEGEND] Intro finished for ${playerName}. Resuming auction.`);
-                refreshedState.status = 'Auctioning';
+                refreshedState.status = 'ONGOING';
                 refreshedState.timer = refreshedState.timerDuration;
+                refreshedState.lastBidTime = new Date();
+                // Bug 2+6 fix: reset timerEndsAt so place_bid validation is correct
                 refreshedState.timerEndsAt = Date.now() + (refreshedState.timerDuration * 1000);
-                
-                io.to(roomCode).emit('auction_resumed', { timer: refreshedState.timerDuration });
-                
+
+                // Set DB lock
+                ActiveRoom.updateOne({ roomCode }, { $set: { isTimerRunning: true, auctionStatus: 'ONGOING', lastBidTime: refreshedState.lastBidTime } }).exec();
+
                 if (roomTimers[roomCode]) clearInterval(roomTimers[roomCode]);
                 roomTimers[roomCode] = setInterval(() => {
-                    tickTimer(roomCode, io);
-                }, 500);
+                    tickAuctionTimer(roomCode, io);
+                }, 1000);
+
+                // Bug 6 fix: client stays paused until it receives auction_resumed
+                io.to(roomCode).emit('auction_resumed', { timer: refreshedState.timerDuration });
             }
         }, 7000); // 7s duration
     } else {
-        state.timerEndsAt = Date.now() + (state.timerDuration * 1000);
-        state.status = 'Auctioning'; // Reset to auctioning for the new player
+        state.status = 'ONGOING';
         
+        // Set DB lock
+        ActiveRoom.updateOne({ roomCode }, { $set: { isTimerRunning: true, auctionStatus: 'ONGOING' } }).exec();
+
         io.to(roomCode).emit('new_player', {
             player,
             nextPlayers, // Full catalog for carousel and pools view
@@ -2143,9 +2218,11 @@ function loadNextPlayer(roomCode, io) {
         if (roomTimers[roomCode]) clearInterval(roomTimers[roomCode]);
 
         roomTimers[roomCode] = setInterval(() => {
-            tickTimer(roomCode, io);
-        }, 500);
+            tickAuctionTimer(roomCode, io);
+        }, 1000);
     }
+
+    persistActiveState(roomCode);
 }
 
 
@@ -2324,7 +2401,7 @@ async function fillRoomWithBots(roomCode, io) {
 
 function handleBotBidding(roomCode, io) {
     const state = roomStates[roomCode];
-    if (!state || !state.isAiMode || state.status !== 'Auctioning') return;
+    if (!state || !state.isAiMode || (state.status !== 'Auctioning' && state.status !== 'ONGOING')) return;
 
     const currentPlayer = state.players[state.currentIndex];
     if (!currentPlayer) return;
@@ -2371,84 +2448,106 @@ function handleBotBidding(roomCode, io) {
         if (Math.random() > bidChance) continue; 
  
         const valuation = getBotValuation(currentPlayer, bot, bot.playersAcquired?.length || 0);
-        // [SAFETY] Round base price just in case data is non-standard
         const startPrice = Math.max(25, Math.floor((currentPlayer.basePrice || 0) / 25) * 25);
         const minInc = getMinIncrement(currentPlayer.poolID, currentAmt);
         const nextBidAmount = currentAmt === 0 ? startPrice : currentAmt + minInc;
 
         if (nextBidAmount <= valuation && nextBidAmount <= bot.currentPurse) {
-            // [LOG] Log competitive bidding
-            if (currentAmt > aggressiveThreshold) {
-                console.log(`[BOT-CALCULATIVE] ${bot.ownerName} bidding ${nextBidAmount}L (Val: ${valuation}L, Purse: ${bot.currentPurse}L)`);
-            }
-            // Place proxy bid for bot
-            state.currentBid = { 
-                amount: nextBidAmount, 
-                teamId: bot.franchiseId, 
-                teamName: bot.teamName, 
-                teamColor: bot.teamThemeColor, 
-                teamLogo: bot.teamLogo, 
-                ownerName: bot.ownerName 
-            };
-            
-            // Reset timer
-            state.timerEndsAt = Date.now() + (state.timerDuration * 1000);
-            state.timer = state.timerDuration;
-
-            markDirty(roomCode, {
-                currentBidAmount: nextBidAmount,
-                highestBidderTeamId: bot.franchiseId
-            });
-
-            io.to(roomCode).emit('bp', {
-                cb: {
-                    a: nextBidAmount,
-                    tid: bot.franchiseId,
-                    tn: bot.teamName,
-                    tc: bot.teamThemeColor,
-                    tl: bot.teamLogo,
-                    on: bot.ownerName
+            // ATOMIC UPDATE for Bots
+            ActiveRoom.findOneAndUpdate(
+                { 
+                    roomCode, 
+                    "currentBid.amount": currentAmt, 
+                    auctionStatus: 'ONGOING' 
                 },
-                t: state.timer
-            });
+                {
+                    $set: {
+                        currentBid: {
+                            amount: nextBidAmount,
+                            teamId: bot.franchiseId,
+                            teamName: bot.teamName,
+                            ownerUserId: bot.ownerUserId
+                        },
+                        lastBidTime: new Date()
+                    },
+                    $push: {
+                        last5Bids: {
+                            $each: [{
+                                amount: nextBidAmount,
+                                teamName: bot.teamName,
+                                timestamp: new Date()
+                            }],
+                            $slice: -5
+                        }
+                    }
+                },
+                { returnDocument: 'after' }
+            ).then(updatedRoom => {
+                if (updatedRoom) {
+                    state.currentBid = { 
+                        amount: nextBidAmount, 
+                        teamId: bot.franchiseId, 
+                        teamName: bot.teamName, 
+                        teamColor: bot.teamThemeColor, 
+                        teamLogo: bot.teamLogo, 
+                        ownerName: bot.ownerName 
+                    };
+                    state.lastBidTime = updatedRoom.lastBidTime;
+                    state.last5Bids = updatedRoom.last5Bids;
+                    state.timer = state.timerDuration;
+                    // Bug 3 fix: reset timerEndsAt after bot bid so human
+                    // bid validation (which reads timerEndsAt) sees full time left.
+                    state.timerEndsAt = Date.now() + (state.timerDuration * 1000);
 
-            console.log(`[BOT-AGGRESSIVE] ${bot.ownerName} placed bid of ${nextBidAmount}L for ${currentPlayer.name} (Val: ${valuation}L). Squad: ${bot.playersAcquired?.length || 0}/25, OS: ${bot.overseasCount || 0}/8`);
-            break; // Only one bot bids per 500ms tick for realism
+                    console.log(`[BOT-ATOMIC] ${bot.ownerName} outbid to ${nextBidAmount}L`);
+                    emitFullAuctionState(roomCode, io);
+                }
+            }).catch(err => {
+                console.error(`[BOT-ERR] Atomic update failed for bot:`, err.message);
+            });
+            
+            break; // Only one bot bid per tick
         }
     }
 }
 
-function tickTimer(roomCode, io) {
+function tickAuctionTimer(roomCode, io) {
     const state = roomStates[roomCode];
-    if (!state || state.status !== 'Auctioning') {
-        if (roomTimers[roomCode]) clearInterval(roomTimers[roomCode]);
+    if (!state || (state.status !== 'ONGOING' && state.status !== 'Auctioning')) {
+        if (roomTimers[roomCode]) {
+            clearInterval(roomTimers[roomCode]);
+            delete roomTimers[roomCode];
+        }
         return;
     }
 
-    const remainingSeconds = Math.max(0, Math.ceil((state.timerEndsAt - Date.now()) / 1000));
-
-    // Only emit if the integer second has changed to avoid spamming the client
-    if (state.timer !== remainingSeconds) {
-        state.timer = remainingSeconds;
-        // Shortened event name and key for high-frequency timer ticks
-        io.to(roomCode).emit('tt', { t: state.timer });
+    const remaining = calculateRemainingTime(state);
+    
+    // Smooth countdown for UI (even if DB is slightly behind)
+    if (state.timer !== remaining) {
+        state.timer = remaining;
     }
 
+    // Every second, sync the full state to prevent UI drift
+    emitFullAuctionState(roomCode, io);
+
     // [NEW] Bot Bidding Logic for AI Mode
-    if (state.isAiMode && state.timer > 0) {
+    if (state.isAiMode && remaining > 0) {
         handleBotBidding(roomCode, io);
     }
 
-    if (state.timer <= 0) {
-        // Nano-second grace period: Wait 500ms at zero before hammer down
-        // to catch late bids from the network
-        setTimeout(() => {
-            const recheckState = roomStates[roomCode];
-            if (recheckState && recheckState.status === 'Auctioning' && recheckState.timer <= 0) {
-                clearInterval(roomTimers[roomCode]);
-                processHammerDown(roomCode, io);
-            }
-        }, 500);
+    // Grace Period: Finalize only if remaining time is -1
+    // This allows a 1-second buffer for late network bids to reach the server.
+    if (remaining <= -1) { // 1s grace period (ceil makes it hit -1 at now > timerEndsAt + 1s)
+        console.log(`[TIMER] Auction loop for ${state.currentPlayer?.name} finished (Grace period exceeded).`);
+        clearInterval(roomTimers[roomCode]);
+        delete roomTimers[roomCode];
+        
+        // Release DB lock
+        ActiveRoom.updateOne({ roomCode }, { $set: { isTimerRunning: false } }).exec();
+
+        // Finalize player
+        processHammerDown(roomCode, io);
     }
 }
 
@@ -2535,7 +2634,10 @@ async function autoResolveCurrentPlayer(roomCode, io, nextPlayerDelay = 3000) {
 async function processHammerDown(roomCode, io, nextPlayerDelay = 3000) {
     const state = roomStates[roomCode];
     if (!state) return;
-    if (state.status !== 'Auctioning') return; // Prevent double triggers
+    if (state.status !== 'ONGOING' && state.status !== 'Auctioning') return; // Prevent double triggers
+
+    // Release DB lock immediately
+    ActiveRoom.updateOne({ roomCode }, { $set: { isTimerRunning: false } }).exec();
 
     const player = state.players[state.currentIndex];
     const playerName = player.player || player.name || 'Unknown Player';
@@ -2550,6 +2652,9 @@ async function processHammerDown(roomCode, io, nextPlayerDelay = 3000) {
             state.teams[winningTeamIndex].currentPurse -= state.currentBid.amount;
             if (player.isOverseas) {
                 state.teams[winningTeamIndex].overseasCount = (state.teams[winningTeamIndex].overseasCount || 0) + 1;
+            }
+            if (!state.teams[winningTeamIndex].playersAcquired) {
+                state.teams[winningTeamIndex].playersAcquired = [];
             }
             state.teams[winningTeamIndex].playersAcquired.push({
                 player: player._id,
@@ -2603,18 +2708,24 @@ async function processHammerDown(roomCode, io, nextPlayerDelay = 3000) {
 
         // Persist Transaction Record
         try {
-            await AuctionTransaction.create({
-                roomId: roomCode,
-                playerId: player._id,
-                soldPrice: state.currentBid.amount,
-                soldToTeamId: state.currentBid.teamId,
-                soldToSocketId: winningSocketId,
-                status: 'sold',
-                bidHistory: [{
-                    bidderTeamId: state.currentBid.teamId,
-                    bidAmount: state.currentBid.amount
-                }]
-            });
+            await AuctionTransaction.findOneAndUpdate(
+                { roomId: roomCode, playerId: player._id },
+                {
+                    $set: {
+                        soldPrice: state.currentBid.amount,
+                        soldToTeamId: state.currentBid.teamId,
+                        soldToSocketId: winningSocketId,
+                        status: 'sold'
+                    },
+                    $push: {
+                        bidHistory: {
+                            bidderTeamId: state.currentBid.teamId,
+                            bidAmount: state.currentBid.amount
+                        }
+                    }
+                },
+                { upsert: true, returnDocument: 'after' }
+            );
 
             // Flush any pending dirty writes first, then persist the sold event atomically
             await flushRoom(roomCode);
@@ -2628,7 +2739,7 @@ async function processHammerDown(roomCode, io, nextPlayerDelay = 3000) {
             // CHECK: Auto-stop if every team has 25 players
             // ensure there is at least one team before treating this as "full" otherwise
             // an empty array would return true and immediately transition to selection
-            const ALL_SQUADS_FULL = state.teams.length > 0 && state.teams.every(t => t.playersAcquired.length >= 25);
+            const ALL_SQUADS_FULL = state.teams.length > 0 && state.teams.every(t => (t.playersAcquired?.length || 0) >= 25);
             if (ALL_SQUADS_FULL) {
                 console.log(`\n--- ALL SQUADS FULL (25 players each) in Room ${roomCode} ---`);
                 handleAuctionEndTransition(roomCode, io);
@@ -2646,11 +2757,13 @@ async function processHammerDown(roomCode, io, nextPlayerDelay = 3000) {
         io.to(roomCode).emit('player_unsold', { player, unsoldHistory: state.unsoldHistory });
 
         try {
-            await AuctionTransaction.create({
-                roomId: roomCode,
-                playerId: player._id,
-                status: 'unsold'
-            });
+            await AuctionTransaction.findOneAndUpdate(
+                { roomId: roomCode, playerId: player._id },
+                {
+                    $set: { status: 'unsold' }
+                },
+                { upsert: true, returnDocument: 'after' }
+            );
             await AuctionRoom.findOneAndUpdate({ roomId: roomCode }, {
                 $set: { currentPlayerIndex: state.currentIndex + 1 }
             });
@@ -2716,4 +2829,8 @@ function isBotSustainable(bot, nextBid) {
     return canAfford;
 }
 
-module.exports = setupSocketHandlers;
+module.exports = {
+    setupSocketHandlers,
+    rehydrateRoomState,
+    resumeAuction
+};

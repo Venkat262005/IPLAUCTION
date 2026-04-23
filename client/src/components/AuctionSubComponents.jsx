@@ -146,10 +146,15 @@ const TeamRow = memo(({
               const playerRecord = allPlayersMap[p.player] || allPlayersMap[p._id] || {};
               let displayName = p.name || playerRecord.name || playerRecord.player || p.player || "Unknown";
               const role = (p.role || playerRecord.role || "").toLowerCase();
-              let roleIcon = "🏏";
-              if (role.includes("wk")) roleIcon = "🧤";
-              else if (role.includes("all") || role.includes("ar")) roleIcon = "🏏⚾";
-              else if (role.includes("bowl")) roleIcon = "⚾";
+              let roleIcon = <img src="https://cdn-icons-png.flaticon.com/128/2160/2160153.png" alt="Batter" className="w-3 h-3 invert opacity-80" />;
+              if (role.includes("wk")) roleIcon = <img src="https://cdn-icons-png.flaticon.com/128/17899/17899688.png" alt="WK" className="w-3 h-3 invert opacity-80" />;
+              else if (role.includes("all") || role.includes("ar")) roleIcon = (
+                  <div className="flex gap-0.5 items-center">
+                    <img src="https://cdn-icons-png.flaticon.com/128/2160/2160153.png" alt="All-Rounder" className="w-3 h-3 invert opacity-80" />
+                    <img src="https://cdn-icons-png.flaticon.com/128/4664/4664360.png" alt="All-Rounder" className="w-3 h-3 invert opacity-80" />
+                  </div>
+              );
+              else if (role.includes("bowl")) roleIcon = <img src="https://cdn-icons-png.flaticon.com/128/4664/4664360.png" alt="Bowler" className="w-3 h-3 invert opacity-80" />;
 
               const nationality = p.nationality || playerRecord.nationality || "";
               const isOverseas = p.isOverseas || p.overseas || playerRecord.isOverseas ||

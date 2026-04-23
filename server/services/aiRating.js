@@ -1,475 +1,368 @@
-const { GoogleGenerativeAI } = require('@google/generative-ai');
-const Groq = require('groq-sdk');
-const AIQueue = require('./AIQueue');
+const AIQueue = require("./AIQueue");
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const groq = process.env.GROQ_API_KEY ? new Groq({ apiKey: process.env.GROQ_API_KEY }) : null;
+const HF_KEY = process.env.HUGGINGFACE_API_KEY;
+const HF_MODEL = process.env.HUGGINGFACE_MODEL || "openai/gpt-oss-20b";
 
-/**
- * Centrally manages AI requests with an automatic fallback mechanism.
- * Tries Gemini (Primary) -> Tries Groq (Secondary) -> Throws/Returns null
- */
-/**
- * Centrally manages AI requests with a smart scheduling & fallback mechanism.
- * Uses AIQueue to decide which provider (Gemini/Groq/Grok) to use based on availability and priority.
- */
-async function getAIResponse(prompt, type = 'evaluation') {
-    const geminiModelName = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
-    const groqModelName = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
-    const xaiModelName = process.env.XAI_MODEL || 'grok-beta';
+// ───────── SAFE PARSER ─────────
+function safeParse(text) {
+    if (!text || typeof text !== "string") throw new Error("INVALID_INPUT");
 
-    const tasks = {
-        gemini: async () => {
-            const model = genAI.getGenerativeModel({ model: geminiModelName }, { apiVersion: 'v1' });
-            const result = await model.generateContent(prompt);
-            return result.response.text();
-        },
-        groq: async () => {
-            if (!groq) throw new Error('Groq not configured');
-            const chatCompletion = await groq.chat.completions.create({
-                messages: [{ role: 'user', content: prompt }],
-                model: groqModelName,
-            });
-            return chatCompletion.choices[0]?.message?.content;
-        },
-        xai: async () => {
-            if (!process.env.XAI_API_KEY) throw new Error('XAI not configured');
-            const response = await fetch('https://api.x.ai/v1/chat/completions', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${process.env.XAI_API_KEY}`
-                },
-                body: JSON.stringify({
-                    messages: [{ role: 'user', content: prompt }],
-                    model: xaiModelName,
-                    temperature: 0
-                })
-            });
-            const data = await response.json();
-            return data.choices?.[0]?.message?.content;
-        }
-    };
+    // Remove <think> or Harmony-style <reasoning> blocks if they exist
+    let cleaned = text.replace(/<(think|reasoning|thought)>[\s\S]*?<\/(think|reasoning|thought)>/g, "").trim();
+
+    const start = cleaned.search(/[\[\{]/);
+    if (start === -1) throw new Error("NO_JSON");
+
+    cleaned = cleaned.substring(start);
+    const end = Math.max(cleaned.lastIndexOf("}"), cleaned.lastIndexOf("]"));
+    if (end !== -1) cleaned = cleaned.substring(0, end + 1);
 
     try {
-        const text = await AIQueue.enqueue({ tasks, label: type });
-        return cleanAIResponse(text);
+        return JSON.parse(cleaned);
+    } catch (e) {
+        throw new Error("JSON_PARSE_ERR");
+    }
+}
+
+// ───────── HUGGING FACE ─────────
+async function huggingfaceAdapterBatch(teamsData) {
+    if (!teamsData || !teamsData.length) return { results: [] };
+    
+    if (!HF_KEY || HF_KEY === "hf_your_token_here") {
+        throw new Error("MISSING_HF_KEY");
+    }
+    
+    console.log(`[HF BATCH] Launching unified batched evaluation for ${teamsData.length} teams...`);
+    
+    const prompt = batchedPrompt(teamsData);
+    const systemPrompt = "Reasoning: high\nYou are an ELITE IPL Analyst. You process ALL teams in the batch and output an array of precise results. ONLY output valid JSON following the schema perfectly. Do NOT truncate the JSON output.";
+
+    try {
+        const baseUrl = process.env.AI_BASE_URL || "https://router.huggingface.co/v1/chat/completions";
+        const res = await fetch(baseUrl, {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${HF_KEY}`,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                model: HF_MODEL,
+                messages: [
+                    { role: "system", content: systemPrompt },
+                    { role: "user", content: prompt }
+                ],
+                max_tokens: 3000,
+                temperature: 0.1
+            })
+        });
+
+        if (!res.ok) {
+            const errBody = await res.json().catch(() => ({}));
+            throw new Error(`HF_STATUS_${res.status}: ${JSON.stringify(errBody)}`);
+        }
+
+        const data = await res.json();
+        const msg = data.choices ? data.choices[0].message : null;
+        
+        if (!msg) throw new Error("HF_EMPTY");
+        
+        let text = msg.content || "";
+        if (msg.reasoning && msg.reasoning.trim() !== "") {
+            text += "\n" + msg.reasoning;
+        }
+        
+        if (!text || text.trim() === "") throw new Error("HF_EMPTY");
+        
+        const parsed = safeParse(text);
+        if (!parsed.results || !Array.isArray(parsed.results)) throw new Error("INVALID_BATCH_SCHEMA");
+        
+        return parsed;
     } catch (err) {
-        console.error(`[AIQueue-FATAL] All providers failed for ${type}:`, err.message);
+        console.error(`[HF BATCH ERROR]`, err.message);
         throw err;
     }
 }
 
-/**
- * Ensures the AI response is valid JSON, stripping markdown tags if present.
- */
-function cleanAIResponse(text) {
-    if (!text) return "";
-    let cleaned = text.trim();
-    // Remove markdown code blocks if present
-    if (cleaned.startsWith('```')) {
-        cleaned = cleaned.replace(/^```json\n?/, '').replace(/```$/, '').trim();
-    }
-    return cleaned;
-}
-
-// ── Home Ground Pitch Data ──────────────────────────────────────────────────
-// Used to judge whether each team's squad suits their home conditions.
-const HOME_GROUND_DATA = {
-    'mumbai indians':       { ground: 'Wankhede Stadium, Mumbai',         pitchType: 'Pace-friendly, bouncy, fast outfield', spinFriendly: false, notes: 'Extra bounce helps fast bowlers. Dew factor at night. Batters love big scores but swing early. Needs: quality pacers, aggressive openers.' },
-    'mi':                   { ground: 'Wankhede Stadium, Mumbai',         pitchType: 'Pace-friendly, bouncy, fast outfield', spinFriendly: false, notes: 'Extra bounce helps fast bowlers. Dew factor at night. Batters love big scores but swing early. Needs: quality pacers, aggressive openers.' },
-    'chennai super kings':  { ground: 'MA Chidambaram Stadium (Chepauk)', pitchType: 'Spin-friendly, slow & low, grips turn',  spinFriendly: true,  notes: 'Classic spin paradise. Off-spinners and leg-spinners dominate. Slow openers struggle. Needs: quality spinners (2-3), experienced batters who play spin well. Overseas pace-heavy teams suffer here.' },
-    'csk':                  { ground: 'MA Chidambaram Stadium (Chepauk)', pitchType: 'Spin-friendly, slow & low, grips turn',  spinFriendly: true,  notes: 'Classic spin paradise. Off-spinners and leg-spinners dominate. Slow openers struggle. Needs: quality spinners (2-3), experienced batters who play spin well. Overseas pace-heavy teams suffer here.' },
-    'royal challengers bengaluru': { ground: 'M. Chinnaswamy Stadium, Bengaluru', pitchType: 'Batting paradise, flat, small boundaries', spinFriendly: false, notes: 'Small ground = premium on big hitters. High-scoring venue. Short boundaries on sides. Needs: power hitters in every slot, death bowling specialists. Teams without finishers suffer.' },
-    'rcb':                  { ground: 'M. Chinnaswamy Stadium, Bengaluru', pitchType: 'Batting paradise, flat, small boundaries', spinFriendly: false, notes: 'Small ground = premium on big hitters. High-scoring venue. Short boundaries on sides. Needs: power hitters in every slot, death bowling specialists. Teams without finishers suffer.' },
-    'kolkata knight riders': { ground: 'Eden Gardens, Kolkata',           pitchType: 'Spin-friendly, slow track, big ground',  spinFriendly: true,  notes: 'Large ground makes it harder for big sixes. Spinners excel in second innings under dew. Needs: quality spinners, disciplined batters who rotate strike. Dew is a massive factor.' },
-    'kkr':                  { ground: 'Eden Gardens, Kolkata',           pitchType: 'Spin-friendly, slow track, big ground',  spinFriendly: true,  notes: 'Large ground makes it harder for big sixes. Spinners excel in second innings under dew. Needs: quality spinners, disciplined batters who rotate strike. Dew is a massive factor.' },
-    'delhi capitals':       { ground: 'Arun Jaitley Stadium (Kotla)',     pitchType: 'Spin-friendly, low & slow, tires quickly', spinFriendly: true, notes: 'Hot conditions tire pitches quickly. Spinners are lethal in overs 6-15. Needs: at least 2 quality spinners + aggressive batters. High-altitude conditions can aid swing early.' },
-    'dc':                   { ground: 'Arun Jaitley Stadium (Kotla)',     pitchType: 'Spin-friendly, low & slow, tires quickly', spinFriendly: true, notes: 'Hot conditions tire pitches quickly. Spinners are lethal in overs 6-15. Needs: at least 2 quality spinners + aggressive batters. High-altitude conditions can aid swing early.' },
-    'punjab kings':         { ground: 'Punjab Cricket Association IS Bindra Stadium, Mohali', pitchType: 'Flat and batting friendly, average pace', spinFriendly: false, notes: 'Good batting surface. Fast outfield. Medium pacers can move the ball early. Needs: strong batting lineup, all-rounders, good death bowling.' },
-    'pbks':                 { ground: 'Punjab Cricket Association IS Bindra Stadium, Mohali', pitchType: 'Flat and batting friendly, average pace', spinFriendly: false, notes: 'Good batting surface. Fast outfield. Medium pacers can move the ball early. Needs: strong batting lineup, all-rounders, good death bowling.' },
-    'rajasthan royals':     { ground: 'Sawai Mansingh Stadium, Jaipur',   pitchType: 'Spin-friendly, slow, dry surface',       spinFriendly: true,  notes: 'Dry conditions create dusty pitches that assist spin. Low and slow outfield. Needs: wrist spinners especially, wily batters who manoeuvre spin well. High dew in evening matches.' },
-    'rr':                   { ground: 'Sawai Mansingh Stadium, Jaipur',   pitchType: 'Spin-friendly, slow, dry surface',       spinFriendly: true,  notes: 'Dry conditions create dusty pitches that assist spin. Low and slow outfield. Needs: wrist spinners especially, wily batters who manoeuvre spin well. High dew in evening matches.' },
-    'sunrisers hyderabad':  { ground: 'Rajiv Gandhi International Stadium, Hyderabad', pitchType: 'Pace early, dries up to assist spin later', spinFriendly: false, notes: 'Good pace early on. Track dries up and assists spinners from over 10. Needs: quality opening pace + 1-2 spinners. Covers toss advantage significantly.' },
-    'srh':                  { ground: 'Rajiv Gandhi International Stadium, Hyderabad', pitchType: 'Pace early, dries up to assist spin later', spinFriendly: false, notes: 'Good pace early on. Track dries up and assists spinners from over 10. Needs: quality opening pace + 1-2 spinners. Covers toss advantage significantly.' },
-    'lucknow super giants': { ground: 'BRSABV Ekana Cricket Stadium, Lucknow', pitchType: 'Spin-friendly, slow and low',       spinFriendly: true,  notes: 'Excellent for spinners due to slow track. Can be a low-scoring venue. Needs: effective spinners, smart rotators of strike, good fielding unit.' },
-    'lsg':                  { ground: 'BRSABV Ekana Cricket Stadium, Lucknow', pitchType: 'Spin-friendly, slow and low',       spinFriendly: true,  notes: 'Excellent for spinners due to slow track. Can be a low-scoring venue. Needs: effective spinners, smart rotators of strike, good fielding unit.' },
-    'gujarat titans':       { ground: 'Narendra Modi Stadium, Ahmedabad', pitchType: 'Flat, high-scoring, large ground',     spinFriendly: false, notes: 'Largest cricket stadium in the world. Flat pitch = batting paradise. Large boundary means sixes are fewer so placement and 3s matter. Needs: power hitters + pace attack.' },
-    'gt':                   { ground: 'Narendra Modi Stadium, Ahmedabad', pitchType: 'Flat, high-scoring, large ground',     spinFriendly: false, notes: 'Largest cricket stadium in the world. Flat pitch = batting paradise. Large boundary means sixes are fewer so placement and 3s matter. Needs: power hitters + pace attack.' },
-    // Legacy teams
-    'deccan chargers':      { ground: 'Rajiv Gandhi International Stadium, Hyderabad', pitchType: 'Pace early, dries up to assist spin later', spinFriendly: false, notes: 'Needs quality pace + 1-2 spinners.' },
-    'dcg':                  { ground: 'Rajiv Gandhi International Stadium, Hyderabad', pitchType: 'Pace early, dries up to assist spin later', spinFriendly: false, notes: 'Needs quality pace + 1-2 spinners.' },
-    'kochi tuskers kerala': { ground: 'Jawaharlal Nehru Stadium, Kochi',  pitchType: 'Humid, pace-friendly, swing in air',   spinFriendly: false, notes: 'Humid coastal conditions. Good for swing bowlers and aggressive batting. Needs: swing bowlers, top-order power.' },
-    'ktk':                  { ground: 'Jawaharlal Nehru Stadium, Kochi',  pitchType: 'Humid, pace-friendly, swing in air',   spinFriendly: false, notes: 'Humid coastal conditions. Needs swing bowlers.' },
-    'pune warriors india':  { ground: 'Maharashtra Cricket Association Stadium, Pune', pitchType: 'Pace-friendly, bouncy, assists seam', spinFriendly: false, notes: 'Known for pace and bounce. Seam bowlers thrive. Needs: quality pace attack, hard-hitting batters.' },
-    'pwi':                  { ground: 'Maharashtra Cricket Association Stadium, Pune', pitchType: 'Pace-friendly, bouncy, assists seam', spinFriendly: false, notes: 'Needs quality pace attack.' },
-    'rising pune supergiant': { ground: 'Maharashtra Cricket Association Stadium, Pune', pitchType: 'Pace-friendly, bouncy, assists seam', spinFriendly: false, notes: 'Needs quality pace attack.' },
-    'rps':                  { ground: 'Maharashtra Cricket Association Stadium, Pune', pitchType: 'Pace-friendly, bouncy, assists seam', spinFriendly: false, notes: 'Needs quality pace attack.' },
-    'gujarat lions':        { ground: 'Saurashtra Cricket Association Stadium, Rajkot', pitchType: 'Flat, good for batting, moderate pace', spinFriendly: false, notes: 'Batting-friendly track. Needs power hitters and all-rounders.' },
-    'gl':                   { ground: 'Saurashtra Cricket Association Stadium, Rajkot', pitchType: 'Flat, good for batting, moderate pace', spinFriendly: false, notes: 'Batting-friendly track.' },
+// ───────── PROMPT TEMPLATE ─────────
+const batchedPrompt = (teams) => {
+    // Minify the prompt (no extra spacing) and strip redundant fields to minimize token usage!
+    return JSON.stringify({
+        task: "analyze_all_teams",
+        rules: [
+            "select best balanced XI from squad",
+            "select exactly 4 impact players",
+            "evaluate players at IPL peak performance",
+            "provide dynamic insights",
+            "RETURN EXACTLY ONE UNIFIED JSON OBJECT CONTAINING THE RESULTS ARRAY"
+        ],
+        input: teams.map(team => ({
+            teamId: team.teamId || team.id || team.teamName,
+            teamName: team.teamName || team.name,
+            home_pitch: team.home_pitch || "Flat",
+            squad: (team.playersAcquired || []).map(p => ({
+                name: p.name,
+                role: p.role,
+                isOverseas: !!p.isOverseas
+            }))
+        })),
+        output_format: {
+            results: [
+                {
+                    teamId: "string (must match input teamId)",
+                    bestXI: { playing11: ["names"], impactPlayers: ["names"] },
+                    homeXI: { playing11: ["names"], impactPlayers: ["names"] },
+                    awayXI: { playing11: ["names"], impactPlayers: ["names"] },
+                    evaluation: {
+                        overallScore: 0,
+                        battingScore: 0,
+                        bowlingScore: 0,
+                        balanceScore: 0,
+                        impactScore: 0,
+                        starPlayer: "string",
+                        bestValuePick: "string",
+                        tacticalVerdict: "string (max 60 words)",
+                        historicalContext: "string (max 30 words)",
+                        homeGroundVerdict: "string (max 30 words)",
+                        weakness: "string (max 40 words)",
+                        benchAnalysis: "string (max 30 words)",
+                        playing11: ["names"],
+                        impactPlayers: ["names"]
+                    }
+                }
+            ]
+        }
+    }); // No indentation to drastically compress tokens
 };
 
-function getHomeGroundData(teamName) {
-    const key = (teamName || '').toLowerCase().trim();
-    return HOME_GROUND_DATA[key] || {
-        ground: 'Home Ground (Unknown)',
-        pitchType: 'Standard T20 pitch',
-        spinFriendly: false,
-        notes: 'No specific ground data available. General T20 evaluation applied.'
+// ───────── CONFIG & MAPPING ─────────
+const PITCH_MAPPING = {
+    "Mumbai Indians": "Pace",
+    "Chennai Super Kings": "Spin",
+    "Royal Challengers Bangalore": "Flat",
+    "Kolkata Knight Riders": "Spin",
+    "Rajasthan Royals": "Pace",
+    "Sunrisers Hyderabad": "Flat",
+    "Delhi Capitals": "Pace",
+    "Punjab Kings": "Flat",
+    "Gujarat Titans": "Pace",
+    "Lucknow Super Giants": "Spin"
+};
+
+function getHomePitch(teamName) {
+    return PITCH_MAPPING[teamName] || "Flat";
+}
+
+// ───────── FALLBACKS ─────────
+function selectionFallback(team) {
+    const players = team.playersAcquired || [];
+    
+    const batPool = [];
+    const arPool = [];
+    const bowlPool = [];
+    
+    players.forEach(p => {
+        const role = (p.role || "").toLowerCase();
+        if (role.includes("all") || role.includes("ar") || role.includes("allrounder")) {
+            arPool.push(p);
+        } else if (role.includes("bowl") || role.includes("bowler")) {
+            bowlPool.push(p);
+        } else {
+            batPool.push(p);
+        }
+    });
+
+    const sortByPoints = (a, b) => (parseFloat(b.points) || 0) - (parseFloat(a.points) || 0);
+    batPool.sort(sortByPoints);
+    arPool.sort(sortByPoints);
+    bowlPool.sort(sortByPoints);
+
+    const selectedBatsmen = batPool.slice(0, 5);
+    const selectedArs = arPool.slice(0, 3);
+    const selectedBowlers = bowlPool.slice(0, 4);
+
+    const corePlayers = [...selectedBatsmen, ...selectedArs, ...selectedBowlers];
+    const coreNames = corePlayers.map(p => p.name);
+    
+    const playing11 = coreNames.slice(0, 11);
+    
+    const remainingPlayers = players
+        .filter(p => !coreNames.includes(p.name))
+        .sort(sortByPoints);
+        
+    const impactPlayers = [
+        ...coreNames.slice(11), 
+        ...remainingPlayers.map(p => p.name)
+    ].slice(0, 4);
+
+    const xi = {
+        playing11: playing11,
+        impactPlayers: impactPlayers
+    };
+    
+    return {
+        teamId: team.id || team.teamName,
+        bestXI: xi,
+        homeXI: xi,
+        awayXI: xi
     };
 }
-// ────────────────────────────────────────────────────────────────────────────
 
-const validateSquad = (team) => {
+function evaluationFallback(team, errorMsg = "") {
     const players = team.playersAcquired || [];
-    const squadSize = players.length;
-
-    if (squadSize < 18) return { valid: false, reason: `Squad has only ${squadSize} players. Minimum 18 required.` };
-
-    let overseas = 0;
-    players.forEach(p => {
-        let playerDoc = null;
-        if (p.player && typeof p.player === 'object') playerDoc = p.player;
-        else if (p.role || p.nationality) playerDoc = p;
-
-        if (playerDoc) {
-            const nation = (playerDoc.nationality || '').toLowerCase().trim();
-            if (nation && !['india', 'indian', 'ind'].includes(nation)) {
-                overseas++;
-            }
-        }
-    });
-
-    if (overseas > 8) return { valid: false, reason: `Squad has ${overseas} Overseas players. Maximum 8 allowed.` };
-
-    return { valid: true };
-};
-
-const evaluateTeam = async (team) => {
-    const validation = validateSquad(team);
-    let validationWarning = null;
     
-    if (!validation.valid) {
-        console.log(`--- [AI-VALIDATION] Squad for ${team.teamName} is technically disqualified: ${validation.reason} ---`);
-        validationWarning = validation.reason;
-    }
+    const batPool = [];
+    const arPool = [];
+    const wkPool = [];
+    const bowlPool = [];
+    
+    players.forEach(p => {
+        const role = (p.role || "").toLowerCase();
+        const score = parseFloat(p.points || 0);
+        
+        if (role.includes("wk") || role.includes("wicket") || role.includes("keeper")) {
+            wkPool.push(score);
+        } else if (role.includes("all") || role.includes("ar") || role.includes("allrounder")) {
+            arPool.push(score);
+        } else if (role.includes("bowl") || role.includes("bowler")) {
+            bowlPool.push(score);
+        } else {
+            // Default to batter
+            batPool.push(score);
+        }
+    });
 
+    batPool.sort((a, b) => b - a);
+    arPool.sort((a, b) => b - a);
+    wkPool.sort((a, b) => b - a);
+    bowlPool.sort((a, b) => b - a);
 
-    const homeGround = getHomeGroundData(team.teamName);
+    const getSum = (arr, count) => {
+        let sum = 0;
+        for (let i = 0; i < count; i++) {
+            sum += arr[i] || 0; // 0 for missing slots
+        }
+        return sum;
+    };
 
-    // We always calculate the "Ideal" AI recommendation for display in the Team Profile
-    console.log(`--- [AI] Generating Strategic Recommendation for ${team.teamName} ---`);
-    let aiRecommendation = { homePlaying11: [], awayPlaying11: [], homeImpactPlayers: [], awayImpactPlayers: [] };
-    try {
-        aiRecommendation = await selectPlaying11AndImpact(team.teamName, team.playersAcquired);
-    } catch (selErr) {
-        console.error('AI recommendation failed:', selErr.message);
-        const ids = team.playersAcquired.map(p => String(p.id || p._id));
-        aiRecommendation.homePlaying11 = ids.slice(0, 11);
-        aiRecommendation.awayPlaying11 = ids.slice(0, 11);
-        aiRecommendation.homeImpactPlayers = ids.slice(11, 15);
-        aiRecommendation.awayImpactPlayers = ids.slice(11, 15);
-    }
+    const batSum = getSum(batPool, 6);
+    const arSum = getSum(arPool, 4);
+    const wkSum = getSum(wkPool, 2);
+    const bowlSum = getSum(bowlPool, 6);
 
-    // Lineups for the evaluation: We prioritize the USER'S selection for the Verdict/Rating
-    const userXI = team.playing11 || [];
-    const userImpact = team.impactPlayers || [];
+    // Pure Mathematical Averages
+    const batAvg = Math.round((batSum + arSum + wkSum) / 12);
+    const bowlAvg = Math.round((bowlSum + arSum) / 10);
+    const finalOverall = Math.round((batSum + arSum + wkSum + bowlSum) / 18);
 
-    // ── IPL Impact Player Rule ────────────────────────────────────────────
-    // In modern IPL, an Impact Player can be substituted in at any point.
-    // This means the BEST impact sub effectively becomes a de-facto 12th player
-    // who will contribute substantially. Treat the composite strength as XI + 1.
-    // Pick the best (most impactful) of the 4 impact subs as the "12th player".
-    const impactPlayerObjects = userImpact.map(id => team.playersAcquired.find(pa => String(pa.id || pa._id) === id)).filter(Boolean);
-    const bestImpact = impactPlayerObjects[0]; // First is typically the primary choice
-    const remainingBenchImpact = impactPlayerObjects.slice(1);
-    // ─────────────────────────────────────────────────────────────────────
+    const sortedPlayers = [...players].sort((a, b) => (parseFloat(b.points) || 0) - (parseFloat(a.points) || 0));
+    const starPlayer = sortedPlayers.length > 0 ? sortedPlayers[0].name : "Unknown";
 
-    const bench = team.playersAcquired.filter(
-        p => !userXI.concat(userImpact).includes(String(p.id || p._id))
-    );
-
-    // AI's recommendation for the Team Profile display
-    const homePlaying11 = aiRecommendation.homePlaying11;
-    const awayPlaying11 = aiRecommendation.awayPlaying11;
-
-    const prompt = `
-You are an IPL Historian, Auction Analyst, and T20 Strategy Expert.
-
-Evaluate the drafted squad carefully. The user has locked in their Starting XI and Impact Subs.
-
-${validationWarning ? `⚠️ WARNING: This squad is technically DISQUALIFIED because: ${validationWarning}. Penalise the score significantly.` : ''}
-
-═══════════════════════════════════════════════
-HOME GROUND INTELLIGENCE
-═══════════════════════════════════════════════
-Team: ${team.teamName}
-Home Venue: ${homeGround.ground}
-Pitch Type: ${homeGround.pitchType}
-Spin Friendly: ${homeGround.spinFriendly ? 'YES — spinners dominate here' : 'NO — pace/batting dominates here'}
-Key Insight: ${homeGround.notes}
-
-This is CRITICAL for evaluation. Judge whether this team bought the RIGHT type of bowlers, 
-batters and all-rounders to dominate at their home ground.
-
-═══════════════════════════════════════════════
-IPL IMPACT PLAYER RULE (2024 onwards)
-═══════════════════════════════════════════════
-An Impact Player can replace any player before the start of any over (batting or bowling).
-This means the BEST impact sub is effectively a 12th playing member who WILL contribute
-meaningfully. Evaluate the team's EFFECTIVE STRENGTH as Playing 11 + the #1 Impact Sub below.
-
-USER'S SELECTED STARTING XI (11 players):
-${userXI.map(id => {
-        const p = team.playersAcquired.find(pa => String(pa.id || pa._id) === id);
-        if (!p) return `Unknown Player (ID:${id})`;
-        const s = p.stats || {};
-        return `${p.name} (${p.role}) | SR ${s.strikeRate || 'N/A'} Avg ${s.average || 'N/A'} Wkts ${s.wickets || 'N/A'} Econ ${s.economy || 'N/A'}`;
-    }).join('\n')}
-
-#1 IMPACT SUB — ACTS AS 12TH PLAYER (evaluate as part of effective XI):
-${bestImpact ? (() => {
-        const s = bestImpact.stats || {};
-        return `${bestImpact.name} (${bestImpact.role}) | SR ${s.strikeRate || 'N/A'} Avg ${s.average || 'N/A'} Wkts ${s.wickets || 'N/A'} Econ ${s.economy || 'N/A'}`;
-    })() : 'No impact player selected'}
-
-REMAINING IMPACT SUBS (rotation/speciality contingency — not primary):
-${remainingBenchImpact.length > 0 ? remainingBenchImpact.map(p => {
-        const s = p.stats || {};
-        return `${p.name} (${p.role}) | SR ${s.strikeRate || 'N/A'} Econ ${s.economy || 'N/A'}`;
-    }).join('\n') : 'None'}
-
-BENCH (not selected):
-${bench.map(p => `${p.name} (${p.role}) | SR ${p.stats?.strikeRate || 'N/A'} Econ ${p.stats?.economy || 'N/A'}`).join('\n')}
-
-AI COACH'S RECOMMENDED HOME XI:
-${homePlaying11.map(id => team.playersAcquired.find(pa => String(pa.id || pa._id) === id)?.name || id).join(', ')}
-
-AI COACH'S RECOMMENDED AWAY XI:
-${awayPlaying11.map(id => team.playersAcquired.find(pa => String(pa.id || pa._id) === id)?.name || id).join(', ')}
-
-═══════════════════════════════════════════════
-EVALUATION CRITERIA (judge ALL of these strictly)
-═══════════════════════════════════════════════
-1. EFFECTIVE XI+1 BALANCE: Does the combination of XI + #1 Impact Sub (12 players) cover all roles?
-   - At least 1 specialist Wicketkeeper (MS Dhoni, Sanju Samson, Rishabh Pant are keepers).
-   - Minimum 5 bowling options in the combined 12.
-   - Mix of Anchors + Aggressors in batting order.
-
-2. HOME GROUND SUITABILITY (critical metric):
-   - If home is SPIN-FRIENDLY: Do they have 2+ quality spinners? Are their key batters good against spin?
-   - If home is PACE-FRIENDLY: Do they have 2+ quality fast bowlers? Can their batters handle pace/bounce?
-   - If home is BATTING PARADISE: Do they have power hitters in top 6? Are their bowlers good at defending?
-   - PENALISE heavily if their bowling attack doesn't suit their home ground type.
-   - REWARD if they obviously built the squad around their home conditions.
-
-3. IMPACT PLAYER STRATEGY: Does the chosen #1 Impact Sub genuinely improve the team?
-   - e.g., bringing in a specialist bowler if the XI is bowling-light, or a power hitter for death overs.
-
-4. AUCTION INTELLIGENCE: Did they over-invest in similar profiles? Gap in critical roles?
-
-5. For evaluation, treat every player as their IPL PRIME version.
-   - CRITICAL ROLE RECOGNITION: Players like Sunil Narine, Ravindra Jadeja, and Axar Patel MUST be recognized as ELITE SPINNERS even if their role is 'All-Rounder'. 
-   - Do NOT call a squad "lacking in spin" if they have elite all-rounder spinners like Narine or Jadeja.
-
-Respond ONLY with JSON:
-
-{
-  "battingScore": 1-10,
-  "bowlingScore": 1-10,
-  "balanceScore": 1-10,
-  "impactScore": 1-10,
-  "overallScore": 1-100,
-  "starPlayer": "Name",
-  "hiddenGem": "Name",
-  "homePlaying11": ["Name"],
-  "awayPlaying11": ["Name"],
-  "homeImpactPlayers": ["Name"],
-  "awayImpactPlayers": ["Name"],
-  "tacticalVerdict": "Detailed analysis covering XI+1 strength AND home ground suitability",
-  "weakness": "Biggest structural weakness",
-  "benchAnalysis": "How the bench/remaining impact subs could improve the XI",
-  "historicalContext": "Comparison to famous IPL team",
-  "homeGroundVerdict": "Specific verdict on whether the squad suits their home conditions"
+    return {
+        overallScore: finalOverall,
+        battingScore: batAvg,
+        bowlingScore: bowlAvg,
+        balanceScore: Math.round(((batAvg + bowlAvg) / 2)),
+        impactScore: finalOverall,
+        starPlayer: starPlayer,
+        bestValuePick: "Calculated",
+        tacticalVerdict: errorMsg ? `AI OFFLINE (Math Fallback): ${errorMsg}` : "Advanced Math Fallback Applied",
+        historicalContext: "",
+        homeGroundVerdict: "",
+        weakness: "",
+        benchAnalysis: "",
+        playing11: players.slice(0, 11).map(p => p.name),
+        impactPlayers: players.slice(11, 15).map(p => p.name)
+    };
 }
 
-Return ONLY JSON.
-`;
+// ───────── MAIN SERVICE ─────────
+async function evaluateAllTeams(teams) {
+    if (!teams || teams.length === 0) return [];
+    console.log(`[AI-BATCH] Unified analysis for ${teams.length} teams...`);
+
+    // Enrich with pitch and budget context
+    const enrichedInput = teams.map(t => ({
+        ...t,
+        home_pitch: getHomePitch(t.name || t.teamName),
+        budget: {
+            total: t.currentPurse || 0,
+            player_costs: (t.playersAcquired || []).reduce((acc, p) => ({ ...acc, [p.name]: p.boughtFor }), {})
+        }
+    }));
 
     try {
-        const text = await getAIResponse(prompt, 'evaluation');
-        const cleanedText = text.replace(/```json/g, '').replace(/```/g, '').trim();
-        const result = JSON.parse(cleanedText);
-        
-        if (validationWarning) {
-            result.tacticalVerdict = `[RULES VIOLATION] ${validationWarning}. ${result.tacticalVerdict}`;
-        }
-        return result;
+        const batchSize = 5;
+        let allResults = [];
+        let anyError = null;
+        const evaluationId = Date.now() + "_" + Math.floor(Math.random() * 1000);
 
+        for (let i = 0; i < enrichedInput.length; i += batchSize) {
+            const chunk = enrichedInput.slice(i, i + batchSize);
+            console.log(`[AI-CHUNK] Processing chunk of ${chunk.length} teams to respect context token limits.`);
+            
+            const res = await AIQueue.enqueue({
+                type: `unified_analyze_${evaluationId}_chunk_${i}`,
+                data: chunk,
+                providers: {
+                    huggingface: (data) => huggingfaceAdapterBatch(data)
+                }
+            });
+
+            if (res.results && Array.isArray(res.results)) {
+                allResults.push(...res.results);
+            }
+            if (res.error) {
+                anyError = res.error;
+            }
+        }
+
+        return teams.map(t => {
+            const teamId = t.id || t.teamName;
+            const evalResult = allResults.find(r => r.teamId === teamId);
+            
+            if (!evalResult || evalResult.fallback) {
+                const fallbackSelection = selectionFallback(t);
+                return {
+                    teamId,
+                    teamName: t.teamName,
+                    bestXI: fallbackSelection.bestXI,
+                    homeXI: fallbackSelection.homeXI,
+                    awayXI: fallbackSelection.awayXI,
+                    evaluation: evaluationFallback(t, anyError || "AI generation fallback triggered.")
+                };
+            }
+
+            // Ensure Home/Away XI exist if AI missed them
+            const fallbackSelection = selectionFallback(t);
+            const defaultXI = fallbackSelection.bestXI;
+            const safeSelect = (s) => (s && Array.isArray(s.playing11)) ? s : (evalResult.bestXI && Array.isArray(evalResult.bestXI.playing11) ? evalResult.bestXI : defaultXI);
+
+            const fallbackEval = evaluationFallback(t, "Missing AI properties merged with math fallback");
+
+            return {
+                ...evalResult,
+                teamName: t.teamName,
+                bestXI: safeSelect(evalResult.bestXI),
+                homeXI: safeSelect(evalResult.homeXI),
+                awayXI: safeSelect(evalResult.awayXI),
+                evaluation: {
+                    ...fallbackEval,
+                    ...(evalResult.evaluation || {})
+                }
+            };
+        });
     } catch (err) {
-        console.error(`AI evaluation failed for ${team.teamName}`, err.message);
-        return {
-            overallScore: validationWarning ? 20 : 50,
-            tacticalVerdict: `AI service unavailable. ${validationWarning ? `Disqualification noted: ${validationWarning}` : 'Fallback score applied.'}`,
-            battingScore: 5, bowlingScore: 5, balanceScore: 5, impactScore: 5,
-            homePlaying11: aiRecommendation?.homePlaying11 || [],
-            awayPlaying11: aiRecommendation?.awayPlaying11 || [],
-            homeImpactPlayers: aiRecommendation?.homeImpactPlayers || [],
-            awayImpactPlayers: aiRecommendation?.awayImpactPlayers || []
-        };
+        console.error("[BATCH ERROR]", err.message);
+        return teams.map(t => ({
+            teamId: t.id || t.teamName,
+            teamName: t.name || t.teamName,
+            bestXI: selectionFallback(t),
+            evaluation: evaluationFallback(t, err.message)
+        }));
     }
-};
-
-const selectPlaying11AndImpact = async (teamName, players) => {
-
-    const homeGround = getHomeGroundData(teamName);
-
-    const prompt = `
-You are a T20 head coach selecting the optimal squad combinations.
-
-Team: ${teamName}
-Home Ground: ${homeGround.ground}
-Home Pitch: ${homeGround.pitchType}
-Home Strategy: ${homeGround.notes}
-
-Select the absolute best lineups from the available squad:
-1. Best HOME Playing 11 — optimise for: ${homeGround.pitchType}
-2. Exactly 4 potential HOME Impact Players (Must be unique and exclude Playing 11)
-3. Best AWAY Playing 11 — optimise for generic away conditions (pace/bounce)
-4. Exactly 4 potential AWAY Impact Players (Must be unique and exclude Playing 11)
-
-MANDATORY RULES:
-1. Each Playing 11 MUST include exactly ONE specialist Wicketkeeper.
-2. Minimum 5 bowling options in each Playing 11.
-3. NO OVERLAP: A player in the Playing 11 CANNOT be an Impact Sub for the SAME mode.
-4. Maximum 4 Overseas players in any Playing 11.
-5. HOME XI must specifically favour ${homeGround.spinFriendly ? 'SPINNERS — this is a spin-friendly venue. Prioritise quality spin bowlers over pace.' : 'PACE BOWLERS and POWER HITTERS — this venue rewards pace attack and big hitting.'}.
-6. The #1 Impact Sub MUST be the player who most improves the XI when brought on (primary tactical sub).
-7. Spinner Recognition: Treat Sunil Narine, Ravindra Jadeja, and Axar Patel as quality spin options for the 11 even if categorized as All-rounders.
-
-Players:
-${players.map(p => {
-        const id = String(p._id || p.id || '');
-        return `ID:${id} Name:${p.name} Role:${p.role} SR:${p.stats?.strikeRate || 'N/A'} Econ:${p.stats?.economy || 'N/A'} Avg:${p.stats?.average || 'N/A'}`;
-    }).join('\n')}
-
-Return JSON:
-{
-"homePlaying11":["id"],
-"homeImpactPlayers":["id"],
-"awayPlaying11":["id"],
-"awayImpactPlayers":["id"]
-}
-`;
-
-    try {
-        const text = await getAIResponse(prompt, 'selection');
-        const cleaned = text.replace(/```json/g, '').replace(/```/g, '').trim();
-        const parsed = JSON.parse(cleaned);
-
-        // Deduplicate: ensure impact subs don't contain players already in the Playing 11
-        const home11 = Array.isArray(parsed.homePlaying11) ? parsed.homePlaying11.slice(0, 11) : [];
-        const away11 = Array.isArray(parsed.awayPlaying11) ? parsed.awayPlaying11.slice(0, 11) : [];
-        const home11Set = new Set(home11.map(String));
-        const away11Set = new Set(away11.map(String));
-
-        // Take first unique candidates not in the 11
-        let homeImpact = (Array.isArray(parsed.homeImpactPlayers) ? parsed.homeImpactPlayers : [])
-            .map(String)
-            .filter(id => !home11Set.has(id))
-            .filter((val, idx, self) => self.indexOf(val) === idx);
-
-        let awayImpact = (Array.isArray(parsed.awayImpactPlayers) ? parsed.awayImpactPlayers : [])
-            .map(String)
-            .filter(id => !away11Set.has(id))
-            .filter((val, idx, self) => self.indexOf(val) === idx);
-
-        // Fallback: If AI gave too few, fill from bench
-        const allPlayerIds = players.map(p => String(p.id || p._id));
-        
-        if (homeImpact.length < 4) {
-            const extra = allPlayerIds.filter(id => !home11Set.has(id) && !homeImpact.includes(id));
-            homeImpact = [...homeImpact, ...extra.slice(0, 4 - homeImpact.length)];
-        }
-        if (awayImpact.length < 4) {
-            const extra = allPlayerIds.filter(id => !away11Set.has(id) && !awayImpact.includes(id));
-            awayImpact = [...awayImpact, ...extra.slice(0, 4 - awayImpact.length)];
-        }
-
-        return {
-            homePlaying11: home11,
-            homeImpactPlayers: homeImpact.slice(0, 4),
-            awayPlaying11: away11,
-            awayImpactPlayers: awayImpact.slice(0, 4)
-        };
-
-    } catch {
-        const ids = players.map(p => String(p._id || p.id));
-        return {
-            homePlaying11: ids.slice(0, 11),
-            homeImpactPlayers: ids.slice(11, 15),
-            awayPlaying11: ids.slice(0, 11),
-            awayImpactPlayers: ids.slice(11, 15)
-        };
-    }
-};
-
-const evaluateAllTeams = async (teamsData) => {
-
-    const evaluations = await Promise.all(
-        teamsData.map(async team => {
-
-            if (team.evaluation && team.evaluation.overallScore > 0) {
-                return team;
-            }
-
-            let evaluation;
-
-            try {
-                evaluation = await evaluateTeam(team);
-            } catch {
-                evaluation = { overallScore: 50 };
-            }
-
-            return { ...team, evaluation };
-
-        })
-    );
-
-    // Sort descending by score then assign rank (1 = highest score)
-    // To ensure no two teams have the same score, we add a tiny, deterministic jitter 
-    // based on their position in the squad catalog if initial scores are equal.
-    const sorted = evaluations.sort((a, b) => {
-        const diff = b.evaluation.overallScore - a.evaluation.overallScore;
-        if (Math.abs(diff) < 0.001) {
-            // Tie-breaker: use total purse spent or a deterministic index-based jitter
-            // We'll add a tiny fraction based on index to ensure uniqueness for the UI
-            return 0; // Will be handled after initial sort
-        }
-        return diff;
-    });
-
-    // Second pass to ensure absolute uniqueness for the leaderboard
-    const seenScores = new Set();
-    sorted.forEach((team, i) => {
-        let score = team.evaluation.overallScore;
-        // If score already exists, decrement slightly to ensure unique rank
-        while (seenScores.has(score)) {
-            score -= 0.1;
-        }
-        team.evaluation.overallScore = parseFloat(score.toFixed(1));
-        seenScores.add(team.evaluation.overallScore);
-        team.rank = i + 1;
-    });
-
-    return sorted;
 }
 
 module.exports = {
     evaluateAllTeams,
-    selectPlaying11AndImpact,
-    evaluateTeam,
-    validateSquad
+    getHomePitch
 };
-
-

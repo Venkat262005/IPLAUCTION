@@ -105,6 +105,7 @@ const importSequentially = async () => {
                     imagepath: doc.image_path || doc.imagepath,
                     image_path: doc.image_path || doc.imagepath,
                     basePrice: basePrice,
+                    points: Number(doc.points) || 0,
                     stats: {
                         matches: Number(doc.matches) || 0,
                         runs: Number(doc.runs) || 0,

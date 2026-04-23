@@ -6,6 +6,7 @@ import { useVoice } from "../context/VoiceContext";
 import { Copy, Check, Shield, Zap, Users, Telescope, ArrowRight, Play, Layout, Settings, AlertTriangle, LogOut, Share2, Crown, Bot, Phone, PhoneOff, Mic, MicOff, Volume2, VolumeX, X } from "lucide-react";
 import { FaWhatsapp } from "react-icons/fa";
 import { motion, AnimatePresence } from "framer-motion";
+import Toast from "../components/Toast";
 
 const IPL_TEAMS = [
   { id: 'MI', name: 'Mumbai Indians', color: '#004BA0', logoUrl: '/logos/MI.png' },
@@ -42,6 +43,7 @@ const Lobby = () => {
   const [roomState, setRoomState] = useState(null);
   const [timerDuration, setTimerDuration] = useState(10);
   const [error, setError] = useState("");
+  const [toast, setToast] = useState(null);
 
   // New state for dynamic team selection during join flow
   const [joinMode, setJoinMode] = useState(false);
@@ -85,7 +87,7 @@ const Lobby = () => {
 
   // Action Handlers
   const handleCreate = async () => {
-    if (!localNameInput.trim()) return setError("Enter your name first");
+    if (!localNameInput.trim()) return setToast({ message: "Enter your name first", type: "warning" });
     try {
       setIsAutoJoining(true);
       const data = await initSession(localNameInput.trim());
@@ -101,7 +103,7 @@ const Lobby = () => {
   const handleJoin = async (codeToJoin = roomCodeInput, nameOverride = null) => {
     const finalName = nameOverride || localNameInput;
     if (!finalName.trim() || !codeToJoin)
-      return setError("Name and Room Code required");
+      return setToast({ message: "Name and Room Code required", type: "warning" });
     try {
       setIsAutoJoining(true);
       const data = await initSession(finalName.trim());
@@ -128,7 +130,7 @@ const Lobby = () => {
   };
 
   const handleClaimTeam = () => {
-    if (!selectedTeamId) return setError("Select a franchise first");
+    if (!selectedTeamId) return setToast({ message: "Select a franchise first", type: "warning" });
     socket.emit("claim_team", {
       roomCode: roomState?.roomCode,
       teamId: selectedTeamId
@@ -333,6 +335,7 @@ const Lobby = () => {
       socket.off("player_status_update");
       socket.off("cohosts_updated");
       socket.off("name_taken");
+      socket.off("connect"); // [STABILITY-UPGRADE]
     };
   }, [socket, navigate]);
 
@@ -1031,6 +1034,12 @@ const Lobby = () => {
           </motion.div>
         )}
       </AnimatePresence>
+
+      <Toast 
+        message={toast?.message} 
+        type={toast?.type} 
+        onClose={() => setToast(null)} 
+      />
     </div>
   );
 };

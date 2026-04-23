@@ -21,10 +21,11 @@ export const SocketProvider = ({ children }) => {
             // In production (VITE_API_URL set), this upgrades immediately.
             transports: ['polling', 'websocket'],
             reconnection: true,
-            reconnectionAttempts: 10,
+            reconnectionAttempts: 15, // [STABILITY] Increased from 10
             reconnectionDelay: 1000,
             reconnectionDelayMax: 5000,
-            timeout: 20000,
+            randomizationFactor: 0.5, // [STABILITY] Avoid "thundering herd" on reconnect
+            timeout: 30000,           // [STABILITY] Increased from 20000
         });
 
         newSocket.on('connect', () => {

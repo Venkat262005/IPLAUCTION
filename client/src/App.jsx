@@ -4,7 +4,7 @@ import { SessionProvider } from "./context/SessionContext";
 import { SocketProvider } from "./context/SocketContext";
 import Lobby from "./pages/Lobby";
 import AuctionPodium from "./pages/AuctionPodium";
-import SquadSelection from "./pages/SquadSelection";
+
 import ResultsReveal from "./pages/ResultsReveal";
 import PublicRooms from "./pages/PublicRooms";
 
@@ -75,7 +75,7 @@ function App() {
                 <Route path="/join/:roomCode" element={<Lobby />} />
                 <Route path="/public-rooms" element={<PublicRooms />} />
                 <Route path="/auction/:roomCode" element={<AuctionPodium />} />
-                <Route path="/selection/:roomCode" element={<SquadSelection />} />
+
                 <Route path="/results/:roomCode" element={<ResultsReveal />} />
               </Routes>
             </div>

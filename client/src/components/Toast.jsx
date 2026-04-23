@@ -2,14 +2,17 @@ import React, { useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, AlertTriangle, CheckCircle2 } from 'lucide-react';
 
-const Toast = ({ message, type, onClose, duration = 5000 }) => {
+const Toast = ({ message, type, onClose, duration = 3000 }) => {
+    const onCloseRef = React.useRef(onClose);
+    onCloseRef.current = onClose;
+
     useEffect(() => {
         if (!message) return;
         const timer = setTimeout(() => {
-            onClose();
+            onCloseRef.current();
         }, duration);
         return () => clearTimeout(timer);
-    }, [message, duration, onClose]);
+    }, [message, duration]);
 
     return (
         <AnimatePresence>
@@ -19,10 +22,10 @@ const Toast = ({ message, type, onClose, duration = 5000 }) => {
                     animate={{ opacity: 1, y: 0, scale: 1 }}
                     exit={{ opacity: 0, y: -20, scale: 0.95 }}
                     onClick={onClose}
-                    className="fixed top-6 left-1/2 -translate-x-1/2 z-[9999] w-[94%] sm:w-[calc(100%-1.5rem)] max-w-sm cursor-pointer"
+                    className="fixed top-4 left-4 right-4 sm:top-8 sm:left-1/2 sm:right-auto sm:-translate-x-1/2 z-[10000] max-w-sm mx-auto cursor-pointer"
                 >
                     <div
-                        className={`flex items-center gap-3 p-4 rounded-2xl border shadow-2xl backdrop-blur-xl transition-colors ${
+                        className={`flex items-center gap-2 sm:gap-4 p-2.5 sm:p-4 rounded-xl sm:rounded-3xl border shadow-2xl backdrop-blur-xl transition-colors ${
                             type === "error"
                                 ? "bg-red-500/40 border-red-500/50"
                                 : type === "warning"
@@ -32,7 +35,7 @@ const Toast = ({ message, type, onClose, duration = 5000 }) => {
                     >
                         {/* Icon */}
                         <div
-                            className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${
+                            className={`shrink-0 w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-2xl flex items-center justify-center ${
                                 type === "error"
                                     ? "bg-red-500/40"
                                     : type === "warning"
@@ -41,17 +44,17 @@ const Toast = ({ message, type, onClose, duration = 5000 }) => {
                             }`}
                         >
                             {type === "error" ? (
-                                <X className="w-5 h-5 text-red-500" />
+                                <X className="w-4 h-4 sm:w-5 sm:h-5 text-red-500" />
                             ) : type === "success" ? (
-                                <CheckCircle2 className="w-5 h-5 text-yellow-400" />
+                                <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5 text-yellow-400" />
                             ) : (
-                                <AlertTriangle className="w-5 h-5 text-yellow-500" />
+                                <AlertTriangle className="w-4 h-4 sm:w-5 sm:h-5 text-yellow-500" />
                             )}
                         </div>
 
                         {/* Message */}
                         <div className="flex-1 min-w-0">
-                            <p className={`text-[13px] sm:text-sm font-black leading-normal tracking-tight uppercase whitespace-normal ${
+                            <p className={`text-[12px] sm:text-[14px] font-black leading-tight tracking-tight uppercase whitespace-normal ${
                                 type === "error" ? "text-red-400" : "text-yellow-50"
                             }`}>
                                 {message}
@@ -61,10 +64,10 @@ const Toast = ({ message, type, onClose, duration = 5000 }) => {
                         {/* Enhanced Hit Area Close Button */}
                         <button
                             onClick={(e) => { e.stopPropagation(); onClose(); }}
-                            className="shrink-0 -mr-1 w-12 h-12 flex items-center justify-center active:scale-75 transition-all text-white/80 hover:text-white"
+                            className="shrink-0 -mr-1 w-8 h-8 sm:w-12 sm:h-12 flex items-center justify-center active:scale-75 transition-all text-white/80 hover:text-white"
                             aria-label="Close notification"
                         >
-                            <X className="w-5 h-5" />
+                            <X className="w-4 h-4 sm:w-5 sm:h-5" />
                         </button>
                     </div>
                 </motion.div>

@@ -265,10 +265,24 @@ const ResultsReveal = () => {
                     </div>
                 </header>
 
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                {(() => {
+                    const isMathFallback = results.some(r => r.evaluation?.tacticalVerdict?.includes('Math Fallback'));
+                    
+                    if (isMathFallback) {
+                        return (
+                            <div className="w-full flex justify-center mt-4">
+                                <div className="scale-[0.6] sm:scale-[0.8] lg:scale-100 origin-top">
+                                    <GlobalResultCard results={results} allPlayersMap={allPlayersMap} />
+                                </div>
+                            </div>
+                        );
+                    }
 
-                    {/* Left: Team List */}
-                    <div className="space-y-4">
+                    return (
+                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+
+                            {/* Left: Team List */}
+                            <div className="space-y-4">
                         <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Final Rankings</h3>
                         {results.map((team, index) => (
                             <motion.div
@@ -570,6 +584,8 @@ const ResultsReveal = () => {
                         </AnimatePresence>
                     </div>
                 </div>
+                );
+                })()}
             </div>
 
             <Toast

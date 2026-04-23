@@ -15,7 +15,7 @@ import {
     useSpring,
     useTransform,
 } from "framer-motion";
-import { Users, Layout, MessageSquare, Play, Pause, Square, ListChecks, AlertTriangle, Settings, Plane, X, SkipForward, FastForward, Mic, MicOff, Phone, PhoneOff, Volume2, VolumeX } from 'lucide-react';
+import { Users, Layout, MessageSquare, Play, Pause, Square, ListChecks, AlertTriangle, Settings, Plane, X, SkipForward, FastForward, Mic, MicOff, Phone, PhoneOff, Volume2, VolumeX, Check, ThumbsUp } from 'lucide-react';
 import { useVoice } from "../context/VoiceContext";
 import GavelSlam from "../components/GavelSlam";
 import {
@@ -34,7 +34,6 @@ const LEGEND_METADATA = {
         subtitle: "Modern Day Legend",
         color: "from-red-600 via-yellow-500 to-red-600",
         aura: "rgba(255, 61, 61, 0.4)",
-        vibe: "👑",
         accent: "#FFD700"
     },
     "MS Dhoni": {
@@ -42,7 +41,6 @@ const LEGEND_METADATA = {
         subtitle: "The Captain Cool",
         color: "from-yellow-400 via-blue-800 to-yellow-400",
         aura: "rgba(255, 215, 0, 0.4)",
-        vibe: "🦁",
         accent: "#FFD700"
     },
     "Rohit Sharma": {
@@ -50,7 +48,6 @@ const LEGEND_METADATA = {
         subtitle: "Captain of Champions",
         color: "from-blue-600 via-white to-blue-600",
         aura: "rgba(0, 75, 160, 0.4)",
-        vibe: "🏏",
         accent: "#FFFFFF"
     },
     "AB de Villiers": {
@@ -58,7 +55,6 @@ const LEGEND_METADATA = {
         subtitle: "Genius of Modern Cricket",
         color: "from-red-600 via-black to-red-600",
         aura: "rgba(239, 68, 68, 0.4)",
-        vibe: "👽",
         accent: "#FFD700"
     },
     "Suresh Raina": {
@@ -66,7 +62,6 @@ const LEGEND_METADATA = {
         subtitle: "The Heart of CSK",
         color: "from-yellow-400 via-yellow-600 to-yellow-400",
         aura: "rgba(234, 179, 8, 0.4)",
-        vibe: "💛",
         accent: "#FFD700"
     },
     "David Warner": {
@@ -74,7 +69,6 @@ const LEGEND_METADATA = {
         subtitle: "Bull from the Bullring",
         color: "from-orange-500 via-black to-orange-600",
         aura: "rgba(249, 115, 22, 0.4)",
-        vibe: "🔥",
         accent: "#FFA500"
     },
     "Chris Gayle": {
@@ -82,7 +76,6 @@ const LEGEND_METADATA = {
         subtitle: "King of the T20 Format",
         color: "from-red-700 via-yellow-500 to-red-700",
         aura: "rgba(185, 28, 28, 0.4)",
-        vibe: "🕶️",
         accent: "#FFD700"
     },
     "Jasprit Bumrah": {
@@ -90,7 +83,6 @@ const LEGEND_METADATA = {
         subtitle: "The Greatest in the World",
         color: "from-blue-700 via-yellow-400 to-blue-700",
         aura: "rgba(29, 78, 216, 0.4)",
-        vibe: "🎯",
         accent: "#60A5FA"
     },
     "Bhuvneshwar Kumar": {
@@ -98,7 +90,6 @@ const LEGEND_METADATA = {
         subtitle: "The Artist of Swing",
         color: "from-orange-400 via-blue-900 to-orange-400",
         aura: "rgba(251, 146, 60, 0.4)",
-        vibe: "🏏",
         accent: "#FDBA74"
     },
     "Lasith Malinga": {
@@ -106,7 +97,6 @@ const LEGEND_METADATA = {
         subtitle: "God of Death Overs",
         color: "from-blue-600 via-yellow-500 to-blue-600",
         aura: "rgba(37, 99, 235, 0.4)",
-        vibe: "⚡",
         accent: "#EAB308"
     },
     "Yuzvendra Chahal": {
@@ -114,7 +104,6 @@ const LEGEND_METADATA = {
         subtitle: "The Smart Spinner",
         color: "from-pink-500 via-blue-600 to-pink-500",
         aura: "rgba(236, 72, 153, 0.4)",
-        vibe: "♟️",
         accent: "#F472B6"
     },
     "Dale Steyn": {
@@ -122,7 +111,6 @@ const LEGEND_METADATA = {
         subtitle: "Precision in Pace",
         color: "from-red-600 via-gray-800 to-red-600",
         aura: "rgba(220, 38, 38, 0.4)",
-        vibe: "🔫",
         accent: "#9CA3AF"
     },
     "Hardik Pandya": {
@@ -130,7 +118,6 @@ const LEGEND_METADATA = {
         subtitle: "The Ultimate All-Rounder",
         color: "from-blue-900 via-yellow-500 to-blue-900",
         aura: "rgba(30, 58, 138, 0.4)",
-        vibe: "🥊",
         accent: "#EAB308"
     },
     "Ravindra Jadeja": {
@@ -138,7 +125,6 @@ const LEGEND_METADATA = {
         subtitle: "The Dynamic 3-D Legend",
         color: "from-yellow-400 via-green-800 to-yellow-400",
         aura: "rgba(234, 179, 8, 0.4)",
-        vibe: "🗡️",
         accent: "#FFD700"
     },
     "Kieron Pollard": {
@@ -146,7 +132,6 @@ const LEGEND_METADATA = {
         subtitle: "The Powerful Finisher",
         color: "from-blue-800 via-yellow-600 to-blue-800",
         aura: "rgba(30, 64, 175, 0.4)",
-        vibe: "🏝️",
         accent: "#FFD700"
     },
     "Andre Russell": {
@@ -154,7 +139,6 @@ const LEGEND_METADATA = {
         subtitle: "Muscle of Muscle",
         color: "from-purple-700 via-yellow-500 to-purple-700",
         aura: "rgba(126, 34, 206, 0.4)",
-        vibe: "💪",
         accent: "#EAB308"
     },
     "Dwayne Bravo": {
@@ -162,7 +146,6 @@ const LEGEND_METADATA = {
         subtitle: "The Showman",
         color: "from-yellow-400 via-blue-700 to-yellow-400",
         aura: "rgba(234, 179, 8, 0.4)",
-        vibe: "🕺",
         accent: "#FFD700"
     },
     "Sachin Tendulkar": {
@@ -170,7 +153,6 @@ const LEGEND_METADATA = {
         subtitle: "The Ultimate Legend",
         color: "from-blue-600 via-orange-500 to-blue-600",
         aura: "rgba(37, 99, 235, 0.4)",
-        vibe: "🙌",
         accent: "#FFFFFF"
     },
     "Virender Sehwag": {
@@ -178,7 +160,6 @@ const LEGEND_METADATA = {
         subtitle: "The Boundary Master",
         color: "from-blue-800 via-red-600 to-blue-800",
         aura: "rgba(30, 64, 175, 0.4)",
-        vibe: "💥",
         accent: "#F87171"
     }
 };
@@ -246,6 +227,9 @@ const AuctionPodium = () => {
     const [spectators, setSpectators] = useState([]);
     const [joinRequests, setJoinRequests] = useState([]);
     const [hasRequested, setHasRequested] = useState(false);
+    
+    // Evaluation Phase State
+    const [evalTimer, setEvalTimer] = useState(240);
     const [showClaimModal, setShowClaimModal] = useState(false);
     const [selectedTeamId, setSelectedTeamId] = useState("");
     const [showHostRequests, setShowHostRequests] = useState(false);
@@ -272,6 +256,12 @@ const AuctionPodium = () => {
 
     // Legendary Welcome State
     const [legendaryWelcome, setLegendaryWelcome] = useState(null);
+    const [endRequest, setEndRequest] = useState(null);
+    const endRequestRef = useRef(null);
+    useEffect(() => {
+        endRequestRef.current = endRequest;
+    }, [endRequest]);
+    const [humanOwners, setHumanOwners] = useState([]);
 
 
     // Chat State
@@ -360,6 +350,21 @@ const AuctionPodium = () => {
         }
     }, [expandedTeamId, roomCode, teamRosters, socket]);
 
+    // --- UI Handlers (Move out of useEffect to fix ReferenceError) ---
+    const handleAcknowledgeEnd = () => {
+        socket.emit("acknowledge_force_end", { roomCode });
+    };
+
+    const handleCancelEnd = () => {
+        socket.emit("cancel_force_end", { roomCode });
+    };
+
+    const handleFinalizeEnd = useCallback(() => {
+        socket.emit("force_end_auction", { roomCode });
+        setShowForceEndConfirm(false);
+        setEndRequest(null);
+    }, [socket, roomCode]);
+
     useEffect(() => {
         if (!socket || !roomCode || !isSessionReady) return;
         setIsSocketReady(true);
@@ -379,6 +384,7 @@ const AuctionPodium = () => {
             setActiveTeams(state.teams);
             setIsPaused(state.isPaused);
             setTimer(state.timer || 10);
+
 
             // Re-link team using userId (permanent)
             const myTeamInState = userId
@@ -407,8 +413,9 @@ const AuctionPodium = () => {
                 socket.emit("request_team_roster", { teamId: myTeamInState.id || myTeamInState.franchiseId });
             }
 
+            if (state.activePlayer) {
                 const pName = state.activePlayer.name || state.activePlayer.player;
-                if (pName && LEGEND_METADATA[pName] && (!state.activeBid || state.activeBid.amount === 0)) {
+                if (!state.isAiMode && pName && LEGEND_METADATA[pName] && (!state.activeBid || state.activeBid.amount === 0)) {
                     setLegendaryWelcome({
                         ...state.activePlayer,
                         ...LEGEND_METADATA[pName]
@@ -432,6 +439,7 @@ const AuctionPodium = () => {
                     currentPlayerRef.current = state.activePlayer;
                 }
                 if (state.activeBid) setCurrentBid(state.activeBid);
+            }
             // Fallback for older server versions or edge cases
             else if (state.players && state.players.length > 0 && state.players[state.currentIndex]) {
                 setCurrentPlayer(state.players[state.currentIndex]);
@@ -444,6 +452,8 @@ const AuctionPodium = () => {
                 socket.emit("request_auction_sync", { roomCode });
             }
 
+            setToast({ message: "Successfully syncronized with terminal.", type: "success" });
+
             // If the page was loaded fresh (tab restore) and we're now back in the game,
             // schedule a second sync as a safety net in case the first one was missed.
             if (!didJoinViaState.current) {
@@ -454,6 +464,11 @@ const AuctionPodium = () => {
                     }
                 }, 1500);
             }
+        };
+
+        const handleConnectError = (err) => {
+            console.error("[SOCKET] Podium connection error:", err.message);
+            setToast({ message: `Terminal connection issue: ${err.message}`, type: "error" });
         };
 
         const handleNewPlayer = ({ player, nextPlayers, timer, skippedHistory: incomingSkipped, isInitial }) => {
@@ -485,7 +500,7 @@ const AuctionPodium = () => {
             };
 
             const pName = player?.name || player?.player;
-            const isLegend = pName && LEGEND_METADATA[pName] && !isInitial;
+            const isLegend = !gameState?.isAiMode && pName && LEGEND_METADATA[pName] && !isInitial;
 
             if (isLegend) {
                 // Trigger Legendary Welcome FIRST
@@ -560,7 +575,9 @@ const AuctionPodium = () => {
                     const amount = mappedBid.amount;
                     let threshold = null;
                     if (poolID.startsWith('marquee')) threshold = 1000;       // 10 Cr
-                    else if (poolID.includes('pool1'))  threshold = 800;        // 8 Cr
+                    else if (poolID.includes('pool1'))  threshold = 700;        // 7 Cr
+                    else if (poolID.includes('pool2'))  threshold = 400;        // 4 Cr
+                    else if (poolID.includes('pool3'))  threshold = 200;        // 2 Cr
                     else if (poolID.includes('emerging')) threshold = 400;      // 4 Cr
 
                     if (threshold !== null && amount >= threshold) {
@@ -644,6 +661,28 @@ const AuctionPodium = () => {
             if (myUpdate) setMyTeam(myUpdate);
         };
 
+        const handleRoomDisbanded = () => {
+            setToast({ message: "The auction terminal has been disbanded by the host.", type: "warning" });
+            setTimeout(() => {
+                navigate("/");
+            }, 3000);
+        };
+
+        const handleAuctionEndRequested = ({ endRequest: req, humanOwners: owners }) => {
+            setEndRequest(req);
+            setHumanOwners(owners);
+            setShowForceEndConfirm(true); 
+        };
+
+        const handleEndAcknowledgementUpdate = ({ acknowledgedBy }) => {
+            setEndRequest(prev => prev ? { ...prev, acknowledgedBy } : null);
+        };
+
+        const handleAuctionEndCancelled = () => {
+            setEndRequest(null);
+            setShowForceEndConfirm(false);
+        };
+
         const handlePlayerUnsold = ({ player, unsoldHistory: updatedHistory }) => {
             setSoldEvent({ type: "UNSOLD", player });
             if (updatedHistory) setUnsoldHistory(updatedHistory);
@@ -667,10 +706,9 @@ const AuctionPodium = () => {
             }
         };
 
-        const handleAuctionFinished = ({ teams, status }) => {
+        const handleAuctionFinished = ({ teams }) => {
             setTimeout(() => {
-                if (status === "Selection") navigate(`/selection/${roomCode}`);
-                else navigate(`/results/${roomCode}`, { state: { finalTeams: teams } });
+                navigate(`/results/${roomCode}`, { state: { finalTeams: teams } });
             }, 3000);
         };
 
@@ -683,10 +721,11 @@ const AuctionPodium = () => {
             }
         };
 
-        const handleSettingsUpdated = ({ timerDuration }) => {
-            console.log("Settings updated! New duration:", timerDuration);
+        const handleSettingsUpdated = ({ timerDuration, timer }) => {
+            console.log("Settings updated! New duration:", timerDuration, "activeTimer:", timer);
             setGameState(prev => prev ? { ...prev, timerDuration } : null);
             setCurrentTimerDuration(timerDuration);
+            if (timer !== undefined) setTimer(timer);
         };
 
         const handleHostChanged = ({ newHost }) => {
@@ -720,8 +759,13 @@ const AuctionPodium = () => {
 
         if (socket.connected) attemptRejoin();
         else socket.on("connect", attemptRejoin);
+        socket.on("connect_error", handleConnectError);
 
         socket.on("room_joined", handleRoomJoined);
+        socket.on("room_disbanded", handleRoomDisbanded);
+        socket.on("auction_end_requested", handleAuctionEndRequested);
+        socket.on("end_acknowledgement_update", handleEndAcknowledgementUpdate);
+        socket.on("auction_end_cancelled", handleAuctionEndCancelled);
         socket.on("lobby_update", handleLobbyUpdate);
         socket.on("new_player", handleNewPlayer);
         socket.on("timer_tick", handleTimerTick);
@@ -730,7 +774,31 @@ const AuctionPodium = () => {
         socket.on("bp", handleBidPlaced);
         socket.on("player_sold", handlePlayerSold);
         socket.on("player_unsold", handlePlayerUnsold);
+
+        // [PRODUCTION-UPGRADE] Unified State Sync
+        socket.on("auction_state_sync", (payload) => {
+            if (!payload) return;
+            if (payload.status === 'Paused') setIsPaused(true);
+            else if (payload.status === 'ONGOING') setIsPaused(false);
+            
+            if (payload.currentPlayer) {
+                setCurrentPlayer(prev => {
+                    // Only update if player actually changed to avoid re-triggering intro logic
+                    if (!prev || prev.id !== payload.currentPlayer.id) return payload.currentPlayer;
+                    return prev;
+                });
+            }
+            if (payload.currentBid) setCurrentBid(payload.currentBid);
+            if (payload.timer !== undefined) setTimer(payload.timer);
+            if (payload.teams) setActiveTeams(payload.teams);
+            if (payload.last5Bids) setBidHistory(payload.last5Bids);
+        });
         socket.on("interest_voting_started", ({ players, timer }) => {
+            // IF host is ending the auction, ignore voting requests
+            if (endRequestRef.current) {
+                console.log("[VOTING] Skipping voting because auction end is in progress.");
+                return;
+            }
             setVotingSession({ players, timer, active: true });
             setSelectedVotes([]);
             setShowVotingModal(true);
@@ -743,6 +811,15 @@ const AuctionPodium = () => {
         socket.on("auction_finished", handleAuctionFinished);
         socket.on("settings_updated", handleSettingsUpdated);
         socket.on("host_changed", handleHostChanged);
+        
+        socket.on("evaluation_started", ({ timer }) => {
+            setEvalTimer(timer);
+            setGameState(prev => prev ? { ...prev, status: "Evaluating" } : null);
+        });
+        socket.on("evaluation_timer_tick", ({ timer }) => {
+            setEvalTimer(timer);
+        });
+        
         socket.on("auction_paused", () => setIsPaused(true));
         socket.on("auction_resumed", (payload) => {
             setIsPaused(false);
@@ -774,6 +851,8 @@ const AuctionPodium = () => {
             socket.off("connect", attemptRejoin);
             socket.off("room_joined", handleRoomJoined);
             socket.off("lobby_update", handleLobbyUpdate);
+            socket.off("connect", attemptRejoin);
+            socket.off("connect_error", handleConnectError);
             socket.off("new_player", handleNewPlayer);
             socket.off("timer_tick", handleTimerTick);
             socket.off("tt", handleTimerTick);
@@ -781,9 +860,12 @@ const AuctionPodium = () => {
             socket.off("bp", handleBidPlaced);
             socket.off("player_sold", handlePlayerSold);
             socket.off("player_unsold", handlePlayerUnsold);
+            socket.off("auction_state_sync");
             socket.off("auction_finished", handleAuctionFinished);
             socket.off("settings_updated", handleSettingsUpdated);
             socket.off("host_changed", handleHostChanged);
+            socket.off("evaluation_started");
+            socket.off("evaluation_timer_tick");
             socket.off("auction_paused");
             socket.off("auction_resumed");
             socket.off("cohosts_updated");
@@ -795,6 +877,9 @@ const AuctionPodium = () => {
             socket.off("participation_rejected");
             socket.off("kicked_from_room");
             socket.off("room_disbanded");
+            socket.off("auction_end_requested", handleAuctionEndRequested);
+            socket.off("end_acknowledgement_update", handleEndAcknowledgementUpdate);
+            socket.off("auction_end_cancelled", handleAuctionEndCancelled);
         };
     }, [socket, roomCode, isSessionReady, userId, playerName, navigate, forceSpectator]);
 
@@ -863,6 +948,22 @@ const AuctionPodium = () => {
     const isModerator = isPrimaryHost || isCoHostUser;
     const isHost = isModerator;
 
+    // Auto-finalize auction end when all human players acknowledge
+    useEffect(() => {
+        if (!isModerator || !endRequest || humanOwners.length === 0) return;
+        
+        const myOwnerEntry = humanOwners.find(o => o.userId === userId);
+        const alreadyAck = myOwnerEntry && endRequest.acknowledgedBy.includes(userId);
+        const allHumansAck = endRequest.acknowledgedBy.length === humanOwners.length;
+        
+        if (allHumansAck) {
+            const timer = setTimeout(() => {
+                handleFinalizeEnd();
+            }, 3000);
+            return () => clearTimeout(timer);
+        }
+    }, [endRequest, humanOwners, userId, isModerator, handleFinalizeEnd]);
+
     const handleToggleCoHost = useCallback((targetUserId) => {
         socket.emit("toggle_cohost", { roomCode, userId: targetUserId });
     }, [socket, roomCode]);
@@ -928,6 +1029,38 @@ const AuctionPodium = () => {
         );
     }
 
+    if (gameState?.status === "Evaluating") {
+        return (
+            <div className="min-h-screen bg-[#0a0702] flex flex-col items-center justify-center p-6 text-center relative overflow-hidden font-sans">
+                <div className="absolute inset-0 bg-sweeping-lines opacity-20"></div>
+                <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-blue-600/10 blur-[150px] rounded-full pointer-events-none"></div>
+                <div className="absolute bottom-0 left-0 w-[500px] h-[500px] bg-purple-600/10 blur-[150px] rounded-full pointer-events-none"></div>
+
+                <div className="z-10 flex flex-col items-center">
+                    <motion.div
+                        animate={{ rotate: 360 }}
+                        transition={{ duration: 3, repeat: Infinity, ease: "linear" }}
+                        className="w-24 h-24 border-4 border-[#D4AF37]/10 border-t-[#D4AF37] border-r-[#D4AF37] rounded-full mb-8 shadow-[0_0_30px_rgba(212,175,55,0.2)]"
+                    />
+                    <h1 className="text-4xl md:text-6xl font-black uppercase tracking-tighter mb-4 italic text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-white to-purple-400">
+                        Analyzing Squads
+                    </h1>
+                    <p className="text-[#D4AF37]/70 text-xs md:text-sm max-w-lg leading-relaxed font-bold uppercase tracking-widest mb-12">
+                        Gemini AI is performing deep tactical evaluations, calculating balance scores, and identifying critical weaknesses.
+                    </p>
+
+                    <div className="glass-panel p-8 rounded-[32px] border-white/10 flex flex-col items-center min-w-[280px] bg-white/5 backdrop-blur-md">
+                        <div className="text-[10px] font-black text-slate-500 uppercase tracking-[0.3em] mb-4">Evaluation Timer</div>
+                        <div className="text-6xl md:text-8xl font-black font-mono tracking-tighter text-white drop-shadow-2xl">
+                            {evalTimer}
+                            <span className="text-2xl text-slate-500 ml-2">s</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
     return (
         <div className="flex flex-col lg:flex-row h-[100dvh] bg-[var(--dark-depth)] bg-sweeping-lines text-slate-100 font-sans selection:bg-yellow-500/30 overflow-hidden relative">
             {/* Grand Welcome Overlay for Legends */}
@@ -984,7 +1117,7 @@ const AuctionPodium = () => {
                                 className="space-y-4"
                             >
                                 <span className="text-xl sm:text-2xl font-black text-[#D4AF37] uppercase tracking-[0.8em] block drop-shadow-lg">
-                                    <span className="opacity-50">{legendaryWelcome.vibe}</span> PRESENTING <span className="opacity-50">{legendaryWelcome.vibe}</span>
+                                    PRESENTING
                                 </span>
                                 <h2 className={`text-6xl sm:text-9xl font-black italic tracking-tighter uppercase leading-[0.8] bg-clip-text text-transparent bg-gradient-to-b ${legendaryWelcome.color} drop-shadow-[0_0_50px_rgba(255,255,255,0.2)] gpu-accelerated`}>
                                     {legendaryWelcome.title}
@@ -1098,6 +1231,28 @@ const AuctionPodium = () => {
 
                 {/* Diagonal Sweeping Lines */}
                 <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-10"></div>
+                
+                {/* Shocking Unsold Red Light Overlay */}
+                <AnimatePresence>
+                    {soldEvent?.type === 'UNSOLD' && (
+                        <motion.div
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0, transition: { duration: 1 } }}
+                            className="absolute inset-0 pointer-events-none z-50"
+                        >
+                            {/* Aggressive Red Vignette */}
+                            <div className="absolute inset-0 bg-[radial-gradient(100%_100%_at_50%_50%,transparent_30%,rgba(220,38,38,0.85)_100%)]"></div>
+                            
+                            {/* Flashing Red Alarm Wash */}
+                            <motion.div
+                                animate={{ opacity: [0.1, 0.5, 0.1] }}
+                                transition={{ duration: 0.8, repeat: Infinity, ease: "easeInOut" }}
+                                className="absolute inset-0 bg-red-600/40 mix-blend-screen"
+                            />
+                        </motion.div>
+                    )}
+                </AnimatePresence>
             </div>
 
             {/* Left Sidebar: Franchises (Responsive) */}
@@ -1588,7 +1743,7 @@ const AuctionPodium = () => {
                                     {/* Frame Corner Ornaments */}
 
                                     {/* Premium Glowing Role Badge - Top Right */}
-                                    <div className="absolute top-8 right-6 sm:right-8 z-30 flex flex-col items-center gap-1.5 drop-shadow-md">
+                                    <div className="absolute top-6 right-5 sm:top-6 sm:right-6 z-30 flex flex-col items-center gap-1.5 drop-shadow-md">
                                         <div className="px-3 sm:px-4 py-1 bg-gradient-to-r from-[#FFE58F] to-[#D4AF37] text-[#080400] rounded-[4px] font-black font-sans text-[9px] sm:text-[11px] tracking-widest uppercase whitespace-nowrap shadow-sm">
                                             {getRoleDisplayName(currentPlayer.role)}
                                         </div>
@@ -1606,19 +1761,10 @@ const AuctionPodium = () => {
                                         )}
                                     </div>
 
-                                    {/* Layout Split: Left Col (Name) & Right Col (Image + Stats) */}
+                                    {/* Layout Split: Center Image, Name Below, Stats at Bottom */}
 
-                                    {/* Left Column: Vertical Name */}
-                                    <div className="absolute left-3 sm:left-6 top-6 sm:top-8 bottom-[20%] w-6 sm:w-10 flex flex-col items-center justify-start pt-8 sm:pt-12 pb-4 z-40 pointer-events-none">
-                                        <h1 className="text-vertical text-[8px] sm:text-[11px] font-serif text-[#FFE58F] tracking-[0.3em] sm:tracking-[0.4em] uppercase whitespace-nowrap opacity-90 overflow-hidden font-medium drop-shadow-sm">
-                                            {currentPlayer.player ||
-                                                currentPlayer.name ||
-                                                "Unknown Player"}
-                                        </h1>
-                                    </div>
-
-                                    {/* Right Column: Image */}
-                                    <div className="absolute right-6 sm:right-8 top-6 sm:top-8 bottom-[24%] sm:bottom-[20%] left-12 sm:left-20 flex flex-col z-10 pointer-events-none overflow-hidden rounded-t-lg">
+                                    {/* Center Image */}
+                                    <div className="absolute right-4 sm:right-6 left-4 sm:left-6 top-0 sm:top-0 bottom-[36%] sm:bottom-[32%] flex flex-col z-10 pointer-events-none overflow-hidden rounded-t-lg">
                                         <motion.img
                                             initial={{ scale: 1.1 }}
                                             animate={{ scale: 1 }}
@@ -1627,6 +1773,7 @@ const AuctionPodium = () => {
                                                 const url = currentPlayer.image_path ||
                                                     currentPlayer.imagepath ||
                                                     currentPlayer.photoUrl;
+                                                
                                                 // Minimal validation for data URLs
                                                 if (url && url.startsWith('data:') && !url.includes('base64,')) {
                                                     return `https://api.dicebear.com/7.x/initials/svg?seed=Invalid+Image`;
@@ -1646,8 +1793,17 @@ const AuctionPodium = () => {
                                         <div className="absolute inset-x-0 bottom-0 h-[30%] bg-gradient-to-t from-[var(--dark-depth)] to-transparent"></div>
                                     </div>
 
-                                    {/* Stats Overlay at the Bottom Right */}
-                                    <div className="absolute right-0 bottom-0 top-[68%] sm:top-[74%] left-6 sm:left-14 flex flex-col items-center justify-center pb-2 px-1 sm:px-4 z-20 pointer-events-none bg-gradient-to-t from-[#07090f] via-[#07090f]/95 to-transparent rounded-br-[12px]">
+                                    {/* Horizontal Player Name */}
+                                    <div className="absolute left-0 right-0 top-[64%] sm:top-[68%] bottom-[22%] sm:bottom-[24%] flex items-center justify-center z-40 pointer-events-none w-full">
+                                        <h1 className="text-[16px] sm:text-[20px] font-sans tracking-[0.15em] uppercase text-center font-black drop-shadow-md leading-tight line-clamp-2 px-2 bg-clip-text text-transparent bg-gradient-to-b from-[#FFE58F] to-[#D4AF37] w-full">
+                                            {currentPlayer.player ||
+                                                currentPlayer.name ||
+                                                "Unknown Player"}
+                                        </h1>
+                                    </div>
+
+                                    {/* Stats Overlay at the Bottom */}
+                                    <div className="absolute right-0 bottom-0 top-[78%] sm:top-[76%] left-0 flex flex-col items-center justify-center pb-2 px-2 sm:px-4 z-20 pointer-events-none bg-gradient-to-t from-[#07090f] via-[#07090f]/95 to-[#07090f]/80 rounded-b-[12px]">
                                         {/* Dynamic Role-Based Stats Grid */}
                                         <div className="w-full h-full flex items-center justify-around px-2">
                                             {(() => {
@@ -1726,8 +1882,8 @@ const AuctionPodium = () => {
                                     </div>
                                 </motion.div>
 
-                                {/* Bidding Arena */}
-                                <div className="flex-1 flex w-full max-w-4xl mx-auto items-center justify-center mt-6 sm:mt-12 lg:mt-0 px-4">
+                                {/* Bidding Arena - Smaller top margin on mobile */}
+                                <div className="flex-1 flex w-full max-w-4xl mx-auto items-center justify-center mt-2 sm:mt-12 lg:mt-0 px-4">
                                     {/* Bidding Core */}
                                     <div className="flex flex-row lg:flex-row items-center gap-4 sm:gap-6 lg:gap-16 w-full justify-center">
                                         <div className="flex flex-col items-center lg:items-start text-center lg:text-left">
@@ -1737,30 +1893,30 @@ const AuctionPodium = () => {
 
                                             {currentBid.teamName ? (
                                                 <div className="flex flex-col items-center gap-3">
-                                                    {/* Bid Info Sticker */}
+                                                    {/* Bid Info Sticker - Smaller and more compact on mobile */}
                                                     <motion.div
                                                         initial={{ opacity: 0, y: -10 }}
                                                         animate={{ opacity: 1, y: 0 }}
-                                                        className="flex items-center gap-3 px-4 py-2 rounded-xl bg-[#1a1205]/80 border border-[#D4AF37]/30 backdrop-blur-md shadow-xl z-20"
+                                                        className="flex items-center gap-2 sm:gap-3 px-3 py-1.5 sm:px-4 sm:py-2 rounded-xl bg-[#1a1205]/80 border border-[#D4AF37]/30 backdrop-blur-md shadow-xl z-20 max-w-[280px] sm:max-w-none"
                                                     >
                                                         {currentBid.teamLogo && (
-                                                            <div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center p-1 shadow-inner shrink-0">
+                                                            <div className="w-6 h-6 sm:w-8 sm:h-8 rounded-lg bg-white flex items-center justify-center p-0.5 sm:p-1 shadow-inner shrink-0">
                                                                 <img src={currentBid.teamLogo} alt="" className="w-full h-full object-contain" />
                                                             </div>
                                                         )}
-                                                        <div className="flex flex-col items-start leading-none">
-                                                            <div className="text-[10px] font-black uppercase tracking-widest text-[#FFE58F] flex items-center gap-2">
-                                                                <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
-                                                                {currentBid.teamName} LEADING
+                                                        <div className="flex flex-col items-start leading-none min-w-0">
+                                                            <div className="text-[8px] sm:text-[10px] font-black uppercase tracking-widest text-[#FFE58F] flex items-center gap-1.5 sm:gap-2 break-words">
+                                                                <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse shrink-0"></span>
+                                                                <span className="truncate sm:whitespace-normal max-w-[150px] sm:max-w-none">{currentBid.teamName} LEADING</span>
                                                             </div>
-                                                            <div className="text-[9px] font-bold text-[#D4AF37]/70 uppercase tracking-widest mt-1">
+                                                            <div className="text-[7px] sm:text-[9px] font-bold text-[#D4AF37]/70 uppercase tracking-widest mt-0.5 sm:mt-1 truncate w-full">
                                                                 {currentBid.ownerName}
                                                             </div>
                                                         </div>
                                                     </motion.div>
 
-                                                    {/* Golden Amount Badge */}
-                                                    <div className="bg-gradient-to-br from-[#FFE58F] via-[#D4AF37] to-[#996515] p-2 sm:p-5 shadow-[0_15px_40px_rgba(212,175,55,0.3)] relative overflow-hidden flex items-center justify-center min-w-[140px] sm:min-w-[240px]"
+                                                    {/* Golden Amount Badge - Reduced padding on mobile */}
+                                                    <div className="bg-gradient-to-br from-[#FFE58F] via-[#D4AF37] to-[#996515] p-2.5 sm:p-5 shadow-[0_15px_40px_rgba(212,175,55,0.3)] relative overflow-hidden flex items-center justify-center min-w-[120px] sm:min-w-[240px]"
                                                         style={{ clipPath: 'polygon(15px 0, calc(100% - 15px) 0, 100% 15px, 100% calc(100% - 15px), calc(100% - 15px) 100%, 15px 100%, 0 calc(100% - 15px), 0 15px)' }}>
                                                         <div className="absolute inset-[2px] bg-gradient-to-br from-[#E6B800] to-[#B38000] pointer-events-none z-0" style={{ clipPath: 'polygon(14px 0, calc(100% - 14px) 0, 100% 14px, 100% calc(100% - 14px), calc(100% - 14px) 100%, 14px 100%, 0 calc(100% - 14px), 0 14px)' }}></div>
                                                         <div className="absolute inset-0 bg-gradient-to-tr from-white/40 through-transparent to-black/10 pointer-events-none z-0"></div>
@@ -1882,8 +2038,12 @@ const AuctionPodium = () => {
                                 <div className="absolute bottom-0 right-2 xs:right-4 flex flex-col items-center justify-end z-30 pointer-events-none">
                                     <button
                                         onClick={handleBid}
-                                        disabled={soldEvent || (myTeam.currentPurse < targetAmount)}
-                                        className={`pointer-events-auto flex flex-col items-center group outline-none transition-all duration-300 origin-bottom hover:-translate-y-2 pb-0 ${soldEvent || (myTeam.currentPurse < targetAmount) ? 'opacity-50 grayscale cursor-not-allowed' : 'active:scale-95'}`}
+                                        disabled={
+                                            soldEvent || 
+                                            (myTeam.currentPurse < targetAmount) ||
+                                            (currentPlayer?.isOverseas && (myTeam?.playersAcquired?.filter(p => p.isOverseas || p.overseas).length >= 8))
+                                        }
+                                        className={`pointer-events-auto flex flex-col items-center group outline-none transition-all duration-300 origin-bottom hover:-translate-y-2 pb-0 ${soldEvent || (myTeam.currentPurse < targetAmount) || (currentPlayer?.isOverseas && (myTeam?.playersAcquired?.filter(p => p.isOverseas || p.overseas).length >= 8)) ? 'opacity-50 grayscale cursor-not-allowed' : 'active:scale-95'}`}
                                     >
                                         <div className="w-16 h-16 border-[2px] border-[#FFE58F]/80 bg-[#1a1205] shadow-[0_0_15px_rgba(0,0,0,0.8)] z-10 flex items-center justify-center rounded-full transition-all group-hover:shadow-[0_0_20px_rgba(251,191,36,0.6)] group-hover:border-[#FFF3B0] relative">
                                             <div className="w-[88%] h-[88%] border border-[#FFF3B0]/50 shadow-inner flex items-center justify-center bg-gradient-to-br from-[#FFE58F] via-[#D4AF37] to-[#996515] rounded-full overflow-hidden relative">
@@ -1975,7 +2135,7 @@ const AuctionPodium = () => {
                                             currentBid.teamId === myTeam?.franchiseId ||
                                             myTeam?.playersAcquired?.length >= 25 ||
                                             (currentPlayer?.isOverseas &&
-                                                (myTeam?.overseasCount || 0) >= 8)
+                                                (myTeam?.playersAcquired?.filter(p => p.isOverseas || p.overseas).length >= 8))
                                         }
                                         className={`
                                         pointer-events-auto flex flex-col items-center group outline-none focus:outline-none hover:-translate-y-4 active:scale-95 transition-all duration-300 origin-bottom pb-0
@@ -2554,59 +2714,138 @@ const AuctionPodium = () => {
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
                         exit={{ opacity: 0 }}
-                        className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+                        className="fixed inset-0 z-[1000] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md"
                     >
                         <motion.div
                             initial={{ scale: 0.9, opacity: 0, y: 20 }}
                             animate={{ scale: 1, opacity: 1, y: 0 }}
                             exit={{ scale: 0.9, opacity: 0, y: 20 }}
-                            className="glass-card max-w-sm w-full p-8 rounded-3xl border border-[#D4AF37]/20 shadow-2xl relative overflow-hidden"
+                            className="glass-card max-w-lg w-full p-8 rounded-3xl border border-[#D4AF37]/20 shadow-2xl relative overflow-hidden"
                         >
-                            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-red-600 to-red-400"></div>
+                            <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-red-600 via-red-500 to-red-400"></div>
 
                             <div className="flex flex-col items-center text-center space-y-6">
                                 <div className="w-16 h-16 rounded-full bg-red-500/10 flex items-center justify-center mb-2">
                                     <AlertTriangle className="w-8 h-8 text-red-500" />
                                 </div>
 
-                                <div>
-                                    <h3 className="text-xl font-black text-white uppercase tracking-wider mb-2">
-                                        End Auction?
+                                <div className="space-y-2">
+                                    <h3 className="text-2xl font-black text-white uppercase tracking-[0.2em]">
+                                        {endRequest ? "End Acknowledgement" : "End Auction?"}
                                     </h3>
-                                    <p className="text-[#D4AF37]/60 text-sm font-medium">
-                                        Are you sure you want to <span className="text-red-400">Force End</span> the auction? This will skip all remaining players.
+                                    <p className="text-[#D4AF37]/60 text-sm font-medium max-w-[280px] mx-auto">
+                                        {endRequest 
+                                            ? "All franchise owners must acknowledge before the auction can be terminated."
+                                            : "Are you sure you want to end the auction? This will skip Pool 3 and Unsold players."
+                                        }
                                     </p>
                                 </div>
 
-                                <div className="flex w-full gap-4 text-[10px] font-black uppercase tracking-widest">
-                                    {/* Cancel (Red X) */}
-                                    <button
-                                        onClick={() => setShowForceEndConfirm(false)}
-                                        className="flex-1 py-4 flex flex-col items-center justify-center gap-2 rounded-2xl bg-white/5 border border-[#D4AF37]/20 text-[#D4AF37]/70 hover:bg-white/10 hover:text-white transition-all group"
-                                    >
-                                        <div className="w-10 h-10 rounded-full bg-red-500/20 group-hover:bg-red-500 flex items-center justify-center transition-colors shadow-lg shadow-red-500/20">
-                                            <svg className="w-5 h-5 text-red-500 group-hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12" />
-                                            </svg>
+                                {endRequest && (
+                                    <div className="w-full bg-black/40 rounded-2xl border border-white/5 p-4 space-y-3">
+                                        <div className="flex justify-between items-center px-1">
+                                            <span className="text-[10px] font-black text-[#D4AF37]/40 uppercase tracking-widest">Team Acknowledgement</span>
+                                            <span className="text-[10px] font-black text-white uppercase tracking-widest">
+                                                {endRequest.acknowledgedBy.length} / {humanOwners.length}
+                                            </span>
                                         </div>
-                                        <span>Cancel</span>
-                                    </button>
+                                        <div className="space-y-2">
+                                            {humanOwners.map((owner) => {
+                                                const hasAck = endRequest.acknowledgedBy.includes(owner.userId);
+                                                return (
+                                                    <div key={owner.userId} className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/5">
+                                                        <div className="flex items-center gap-3">
+                                                            <div className="w-8 h-8 rounded-full bg-yellow-500/10 flex items-center justify-center border border-yellow-500/20">
+                                                                <span className="text-xs font-black text-yellow-500">{owner.teamName?.[0]}</span>
+                                                            </div>
+                                                            <span className="text-xs font-bold text-white/80">{owner.teamName}</span>
+                                                        </div>
+                                                        {hasAck ? (
+                                                            <div className="flex items-center gap-1.5 text-emerald-500">
+                                                                <Check className="w-4 h-4" />
+                                                                <span className="text-[9px] font-black uppercase">Acknowledged</span>
+                                                            </div>
+                                                        ) : (
+                                                            <div className="flex items-center gap-1.5 text-yellow-500/50">
+                                                                <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
+                                                                <span className="text-[9px] font-black uppercase">Waiting...</span>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                )}
 
-                                    {/* Confirm (Green Tick) */}
-                                    <button
-                                        onClick={() => {
-                                            socket.emit("force_end_auction", { roomCode });
-                                            setShowForceEndConfirm(false);
-                                        }}
-                                        className="flex-1 py-4 flex flex-col items-center justify-center gap-2 rounded-2xl bg-green-500/10 border border-green-500/20 text-green-400 hover:bg-green-500 hover:text-white transition-all group shadow-lg shadow-green-500/10"
-                                    >
-                                        <div className="w-10 h-10 rounded-full bg-green-500/20 group-hover:bg-green-500 flex items-center justify-center transition-colors shadow-lg shadow-green-500/20">
-                                            <svg className="w-6 h-6 text-green-500 group-hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" />
-                                            </svg>
-                                        </div>
-                                        <span>Confirm</span>
-                                    </button>
+                                <div className="flex w-full gap-4 text-[10px] font-black uppercase tracking-widest">
+                                    {!endRequest ? (
+                                        <>
+                                            <button
+                                                onClick={() => setShowForceEndConfirm(false)}
+                                                className="flex-1 py-4 flex flex-col items-center justify-center gap-2 rounded-2xl bg-white/5 border border-[#D4AF37]/20 text-[#D4AF37]/70 hover:bg-white/10 hover:text-white transition-all transform hover:scale-[1.02] active:scale-[0.98]"
+                                            >
+                                                <X className="w-5 h-5 mb-1" />
+                                                <span>Cancel</span>
+                                            </button>
+                                            <button
+                                                onClick={() => socket.emit("request_force_end", { roomCode })}
+                                                className="flex-1 py-4 flex flex-col items-center justify-center gap-2 rounded-2xl bg-red-600/10 border border-red-500/30 text-red-500 hover:bg-red-600 hover:text-white transition-all transform hover:scale-[1.02] active:scale-[0.98] shadow-lg shadow-red-500/10"
+                                            >
+                                                <AlertTriangle className="w-5 h-5 mb-1" />
+                                                <span>Request End</span>
+                                            </button>
+                                        </>
+                                    ) : (
+                                        <>
+                                            {isModerator && (
+                                                <button
+                                                    onClick={handleCancelEnd}
+                                                    className="flex-1 py-4 flex flex-col items-center justify-center gap-2 rounded-2xl bg-white/5 border border-white/10 text-white/50 hover:bg-white/10 hover:text-white transition-all"
+                                                >
+                                                    <X className="w-5 h-5 mb-1" />
+                                                    <span>Dismiss</span>
+                                                </button>
+                                            )}
+                                            
+                                            {(() => {
+                                                const myOwnerEntry = humanOwners.find(o => o.userId === userId);
+                                                const alreadyAck = myOwnerEntry && endRequest.acknowledgedBy.includes(userId);
+                                                const allHumansAck = endRequest.acknowledgedBy.length === humanOwners.length;
+                                                
+                                                if (isModerator && allHumansAck) {
+                                                    return (
+                                                        <button
+                                                            onClick={handleFinalizeEnd}
+                                                            className="flex-[2] py-4 flex flex-col items-center justify-center gap-2 rounded-2xl bg-emerald-500 text-black hover:bg-emerald-400 transition-all shadow-[0_0_30px_rgba(16,185,129,0.3)] animate-pulse"
+                                                        >
+                                                            <Check className="w-6 h-6 mb-1" />
+                                                            <span>Finalize End</span>
+                                                        </button>
+                                                    );
+                                                }
+                                                
+                                                if (myOwnerEntry && !alreadyAck) {
+                                                    return (
+                                                        <button
+                                                            onClick={handleAcknowledgeEnd}
+                                                            className="flex-[2] py-4 flex flex-col items-center justify-center gap-2 rounded-2xl bg-[#D4AF37] text-black hover:bg-[#B8962F] transition-all shadow-[0_0_30px_rgba(212,175,55,0.3)]"
+                                                        >
+                                                            <ThumbsUp className="w-6 h-6 mb-1" />
+                                                            <span>Acknowledge</span>
+                                                        </button>
+                                                    );
+                                                }
+                                                
+                                                return (
+                                                    <div className="flex-[2] py-4 flex flex-col items-center justify-center gap-2 rounded-2xl bg-white/5 border border-white/10 text-white/30 cursor-wait">
+                                                       <div className="w-5 h-5 border-2 border-current border-t-transparent rounded-full animate-spin mb-1"></div>
+                                                       <span>{allHumansAck ? "Waiting for Host" : "Waiting for Others"}</span>
+                                                    </div>
+                                                );
+                                            })()}
+                                        </>
+                                    )}
                                 </div>
                             </div>
                         </motion.div>
